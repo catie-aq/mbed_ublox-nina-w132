@@ -556,7 +556,7 @@ int NINAW132::scan(WiFiAccessPoint *res, unsigned limit, scan_mode mode, duratio
 
     ret_parse_send = _parser.send("AT+UWSCAN");
     
-    if (!(ret_parse_send && _parser.recv("OK\n"))) {
+    if (!(ret_parse_send && _parser.recv("OK"))) {
         tr_warning("scan(): AP info parsing aborted.");
         // Lets be happy about partial success and not return NSAPI_ERROR_DEVICE_ERROR
         printf("scan_r count: %d\n", _scan_r.cnt);
@@ -1294,29 +1294,62 @@ bool NINAW132::get_sntp_time(std::tm *t)
 
 bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
 {
-    int sec = NSAPI_SECURITY_UNKNOWN;
-    int dummy = 0;
-    int ret; 
-    char c_dummy;
-    char mac_address[13];
+    printf("TRIGGED\n");
+    fflush(stdout);
+    uint8_t sec = NSAPI_SECURITY_UNKNOWN;
+    int ret;
 
-    // ret = _parser.scanf("%2X%2X%2X%2X%2X%2X,%d,\"%32[^\"]\",%d,%d,%d,%d,%d",
-    ret = _parser.scanf("%2X%2X%2X%2X%2X%2X,%d,\"%32[^\"\"]\",%d,%d,%d,%d,%d",
-                        &ap->bssid[0], &ap->bssid[1], &ap->bssid[2], &ap->bssid[3], &ap->bssid[4], &ap->bssid[5],
-                        &dummy,
-                        ap->ssid,
-                        &ap->channel,
-                        &ap->rssi,
-                        &dummy,
-                        &dummy,
-                        &dummy);
+    char line_buffer[70]; // Buffer length needs to be refined
 
+    // Scanf the entire line into a buffer for further processing
+    ret = _parser.scanf("%s\n", line_buffer);
+
+    printf("SCANF\n");
+    fflush(stdout);
     if (ret < 0) {
+        printf("ERROR\n");
+        fflush(stdout);
         _parser.abort();
-        tr_warning("_recv_ap(): AP info missing.");
+        tr_warning("_recv_ap(): scanf error.");
+    }
+    printf("NO ERROR\n");
+    printf("%s\n", line_buffer);
+    fflush(stdout);
+
+    // Initialize the SSID to all \0
+    // Scanf the buffer to scrape all appropriate datas
+    ret = sscanf(line_buffer, "%2hhX%2hhX%2hhX%2hhX%2hhX%2hhX,%*d,\"%32[^\"]\" ,%hhu,%hhd,%hhu,%*d,%*d",
+                 &ap->bssid[0], &ap->bssid[1], &ap->bssid[2], &ap->bssid[3], &ap->bssid[4], &ap->bssid[5],
+                 ap->ssid,
+                 &ap->channel,
+                 &ap->rssi,
+                 &sec);
+
+    printf("SSCANF\n");
+    printf("%s: %d\n", ap->ssid, ret);
+    fflush(stdout);
+
+    if (ret < 9) {
+        // Scanf the buffer again if no SSID is detected (scanf error)
+        ret = sscanf(line_buffer, "%2hhX%2hhX%2hhX%2hhX%2hhX%2hhX,%*d,\"\" ,%hhu,%hhd,%hhu,%*d,%*d",
+                     &ap->bssid[0], &ap->bssid[1], &ap->bssid[2], &ap->bssid[3], &ap->bssid[4], &ap->bssid[5],
+                     &ap->channel,
+                     &ap->rssi,
+                     &sec);
+        
+        printf("SSCANF2\n");
+        fflush(stdout);
+
+        sprintf(ap->ssid, "(hidden)");
+
+        printf("RETRY: %s: %d\n", ap->ssid, ret);
     }
 
-    //ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
+    switch (sec) {
+        case 0: ap->security = NSAPI_SECURITY_NONE; break;
+        case 1: ap->security = NSAPI_SECURITY_NONE; break;
+    }
+    ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
 
     return ret < 0 ? false : true;
 }
@@ -1459,6 +1492,8 @@ void NINAW132::_oob_socket4_closed()
 
 void NINAW132::_oob_connection()
 {
+    // Ignore the session ID, it's not relevant
+
     _conn_status = NSAPI_STATUS_CONNECTING;
     MBED_ASSERT(_conn_stat_cb);
     _conn_stat_cb();
