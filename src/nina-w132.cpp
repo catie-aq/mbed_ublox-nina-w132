@@ -1294,8 +1294,6 @@ bool NINAW132::get_sntp_time(std::tm *t)
 
 bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
 {
-    printf("TRIGGED\n");
-    fflush(stdout);
     uint8_t sec = NSAPI_SECURITY_UNKNOWN;
     int ret;
 
@@ -1304,17 +1302,12 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
     // Scanf the entire line into a buffer for further processing
     ret = _parser.scanf("%s\n", line_buffer);
 
-    printf("SCANF\n");
-    fflush(stdout);
     if (ret < 0) {
         printf("ERROR\n");
         fflush(stdout);
         _parser.abort();
         tr_warning("_recv_ap(): scanf error.");
     }
-    printf("NO ERROR\n");
-    printf("%s\n", line_buffer);
-    fflush(stdout);
 
     // Initialize the SSID to all \0
     // Scanf the buffer to scrape all appropriate datas
@@ -1325,9 +1318,7 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
                  &ap->rssi,
                  &sec);
 
-    printf("SSCANF\n");
     printf("%s: %d\n", ap->ssid, ret);
-    fflush(stdout);
 
     if (ret < 9) {
         // Scanf the buffer again if no SSID is detected (scanf error)
@@ -1336,9 +1327,6 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
                      &ap->channel,
                      &ap->rssi,
                      &sec);
-        
-        printf("SSCANF2\n");
-        fflush(stdout);
 
         sprintf(ap->ssid, "(hidden)");
 
@@ -1348,8 +1336,9 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
     switch (sec) {
         case 0: ap->security = NSAPI_SECURITY_NONE; break;
         case 1: ap->security = NSAPI_SECURITY_NONE; break;
+        default: ap->security = NSAPI_SECURITY_UNKNOWN;
     }
-    ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
+    //ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
 
     return ret < 0 ? false : true;
 }
@@ -1504,7 +1493,7 @@ void NINAW132::_oob_disconnection()
     int reason = 0;
     int session_id = 0;
 
-    if (_parser.recv("%d,%d\n", session_id, reason)) {
+    if (_parser.recv("%d, %d\n", &session_id, &reason)) {
         _disconnection_reason = reason;
         if (reason == SECURITY_PROBLEM) {
             //force disconnection
