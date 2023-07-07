@@ -1318,8 +1318,6 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
                  &ap->rssi,
                  &sec);
 
-    printf("%s: %d\n", ap->ssid, ret);
-
     if (ret < 9) {
         // Scanf the buffer again if no SSID is detected (scanf error)
         ret = sscanf(line_buffer, "%2hhX%2hhX%2hhX%2hhX%2hhX%2hhX,%*d,\"\" ,%hhu,%hhd,%hhu,%*d,%*d",
@@ -1329,16 +1327,15 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
                      &sec);
 
         sprintf(ap->ssid, "(hidden)");
-
-        printf("RETRY: %s: %d\n", ap->ssid, ret);
     }
 
-    switch (sec) {
-        case 0: ap->security = NSAPI_SECURITY_NONE; break;
-        case 1: ap->security = NSAPI_SECURITY_NONE; break;
-        default: ap->security = NSAPI_SECURITY_UNKNOWN;
-    }
-    //ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
+    if (sec == 0x00) ap->security = NSAPI_SECURITY_NONE;
+    else if ((sec & 0x08) == 0x08) ap->security = NSAPI_SECURITY_WPA;
+    else if ((sec & 0x10) == 0x10) ap->security = NSAPI_SECURITY_WPA2;
+    else if ((sec & 0x18) == 0x18) ap->security = NSAPI_SECURITY_WPA_WPA2;
+    else if ((sec & 0x18) == 0x20) ap->security = NSAPI_SECURITY_WPA3;
+    else if ((sec & 0x18) == 0x30) ap->security = NSAPI_SECURITY_WPA3_WPA2;
+    else ap->security = NSAPI_SECURITY_UNKNOWN;
 
     return ret < 0 ? false : true;
 }
