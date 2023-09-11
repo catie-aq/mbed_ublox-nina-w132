@@ -320,56 +320,40 @@ nsapi_error_t NINAW132::connect(const char *ap, const char *passPhrase)
 {
     nsapi_error_t ret = NSAPI_ERROR_OK;
     bool res = false;
-    int attempt = 0;
-    char read_buffer[50];
 
     _smutex.lock();
     // set the SSID
     //set_timeout(NINA_W132_SEND_TIMEOUT);
     //_parser.flush();
-    while ((res != true) && (attempt < 3)) {
-        res = _parser.send("AT+UWSC=0,2,\"%s\"", ap);
-        if (!res || !_parser.recv("OK")) {
-            ret = NSAPI_ERROR_PARAMETER;
-            _parser.read(read_buffer, 50);
-            printf("set SSID: parameter error: %s, %s\n", ap, read_buffer);
-            attempt++;
-            ThisThread::sleep_for(1s);
-        }
-        printf("SSID attempt: %d, res: %d\n", attempt, res);
-        set_timeout(); // restore default timeout
-    }
 
-    res = false;
-    attempt = 0;
-    while ((res != true) && (attempt < 3)) {
+    res = _parser.send("AT+UWSC=0,2,\"%s\"", ap);
+    if (!res || !_parser.recv("OK")) {
+        printf("set SSID: parameter error: %s\n", ap);
+        ret = NSAPI_ERROR_PARAMETER;
+    }
+    set_timeout(); // restore default timeout
+
     // set the password
+    if (ret == NSAPI_ERROR_OK) {
         if (passPhrase != NULL) {
             res = _parser.send("AT+UWSC=0,8,\"%s\"", passPhrase);
             if (!res || !_parser.recv("OK")) {
                 ret = NSAPI_ERROR_PARAMETER;
-                 _parser.read(read_buffer, 50);
-                attempt++;
-                ThisThread::sleep_for(1s);
-                printf("set password: parameter error: %s, %s\n", passPhrase, read_buffer);
+                printf("set SSID: parameter error: %s\n", passPhrase);
             }
+        } else {
+            ret = NSAPI_ERROR_PARAMETER;
+            printf("set SSID: parameter error: %s\n", passPhrase);
         }
-         set_timeout(); // restore default timeout
-        printf("PWD attempt: %d, res: %d\n", attempt, res);
     }
 
     set_timeout(NINA_W132_CONNECT_TIMEOUT);
-    // set_timeout(); // restore default timeout
 
-    res = false;
-    attempt = 0;
-    while ((res != true) && (attempt < 3)) {
+    
+    if (ret == NSAPI_ERROR_OK) {
         res = _parser.send("AT+UWSCA=0,3");
         if (!res || !_parser.recv("OK")) {
-            ret = NSAPI_ERROR_NO_CONNECTION;
-            printf("error no connection!\n");
-            attempt++;
-            ThisThread::sleep_for(1s);
+            printf("\nconnection error!\n");
             // if (_fail) {
             //     if (_connect_error == 1) {
             //         ret = NSAPI_ERROR_CONNECTION_TIMEOUT;
@@ -383,12 +367,12 @@ nsapi_error_t NINAW132::connect(const char *ap, const char *passPhrase)
             //     _fail = false;
             //     _connect_error = 0;
             // }
+        
         }
-        printf("CONN attempt: %d, res: %d\n", attempt, res);
-        set_timeout(NINA_W132_CONNECT_TIMEOUT);
-    }
 
+    }
     set_timeout(); // restore default timeout
+
     _smutex.unlock();
 
     return ret;
