@@ -82,7 +82,7 @@ public:
      * @param rx        RX pin
      * @param debug     Enable debugging
      */
-    NINAW132Interface(PinName tx, PinName rx, bool debug = false, PinName rts = NC, PinName cts = NC, PinName rst = NC, PinName pwr = NC);
+    NINAW132Interface(PinName tx = MBED_CONF_NINA_W132_TX, PinName rx = MBED_CONF_NINA_W132_RX, bool debug = false, PinName rts = NC, PinName cts = NC, PinName rst = NC, PinName pwr = NC);
 
     /**
      * @brief NINAW132Interface default destructor

@@ -165,6 +165,16 @@ NINAW132Interface::~NINAW132Interface()
     _pwr_pin.power_off();
 }
 
+#if MBED_CONF_NINA_W132_PROVIDE_DEFAULT
+
+WiFiInterface *WiFiInterface::get_default_instance()
+{
+    static NINAW132Interface nina_w132;
+    return &nina_w132;
+}
+
+#endif
+
 NINAW132Interface::ResetPin::ResetPin(PinName rst_pin) : _rst_pin(mbed::DigitalOut(rst_pin, 1))
 {
 }
@@ -197,26 +207,26 @@ NINAW132Interface::PowerPin::PowerPin(PinName pwr_pin) : _pwr_pin(mbed::DigitalO
 
 void NINAW132Interface::PowerPin::power_on()
 {
-    // if (_pwr_pin.is_connected()) {
-    //     _pwr_pin = MBED_CONF_NINA_W132_POWER_ON_POLARITY;
-    //     tr_debug("power_on(): HW power-on.");
-    //     ThisThread::sleep_for(milliseconds(MBED_CONF_NINA_W132_POWER_ON_TIME_MS));
-    // }
+    if (_pwr_pin.is_connected()) {
+        _pwr_pin = MBED_CONF_NINA_W132_POWER_ON_POLARITY;
+        debug("power_on(): HW power-on.");
+        ThisThread::sleep_for(milliseconds(MBED_CONF_NINA_W132_POWER_ON_TIME_MS));
+    }
 }
 
 void NINAW132Interface::PowerPin::power_off()
 {
-    // if (_pwr_pin.is_connected()) {
-    //     _pwr_pin = !MBED_CONF_NINA_W132_POWER_ON_POLARITY;
-    //     tr_debug("power_off(): HW power-off.");
-    //     ThisThread::sleep_for(milliseconds(MBED_CONF_NINA_W132_POWER_OFF_TIME_MS));
-    // }
+    if (_pwr_pin.is_connected()) {
+        _pwr_pin = !MBED_CONF_NINA_W132_POWER_ON_POLARITY;
+        debug("power_off(): HW power-off.");
+        ThisThread::sleep_for(milliseconds(MBED_CONF_NINA_W132_POWER_OFF_TIME_MS));
+    }
 }
 
 void NINAW132Interface::_power_off()
 {
-    // _rst_pin.rst_assert();
-    // _pwr_pin.power_off();
+    _rst_pin.rst_assert();
+    _pwr_pin.power_off();
 }
 
 bool NINAW132Interface::PowerPin::is_connected()
@@ -241,77 +251,78 @@ int NINAW132Interface::connect(const char *ssid, const char *pass, nsapi_securit
 
 void NINAW132Interface::_connect_async()
 {
+    // _cmutex.lock();
+    // _ninaw132.uart_enable_input(true);
+    // _ninaw132.authentification_type(_ap_sec);
+    // _ninaw132.dhcp(true, 1);
+    // _ninaw132.connect(ap_ssid, ap_pass);
+    // _cmutex.unlock();
+
+    nsapi_error_t status = _init();
+    if (status != NSAPI_ERROR_OK) {
+        _connect_retval = status;
+        _ninaw132.uart_enable_input(false);
+        _software_conn_stat = IFACE_STATUS_DISCONNECTED;
+        //_conn_stat_cb will be called from refresh_conn_state_cb
+        return;
+    }
+
+    if (_dhcp && !_ninaw132.dhcp(true, 1)) {
+        _connect_retval = NSAPI_ERROR_DHCP_FAILURE;
+        _ninaw132.uart_enable_input(false);
+        _software_conn_stat = IFACE_STATUS_DISCONNECTED;
+        //_conn_stat_cb will be called from refresh_conn_state_cb
+        return;
+    }
     _cmutex.lock();
-    _ninaw132.uart_enable_input(true);
-    _ninaw132.authentification_type(_ap_sec);
-    _ninaw132.dhcp(true, 1);
-    _ninaw132.connect(ap_ssid, ap_pass);
+    if (!_connect_event_id) {
+        tr_debug("_connect_async(): Cancelled.");
+        _cmutex.unlock();
+        return;
+    }
+
+    if (_ap_sec != NSAPI_SECURITY_NONE) {
+        _ninaw132.authentification_type(_ap_sec);
+    }
+
+
+    _connect_retval = _ninaw132.connect(ap_ssid, ap_pass);
+    auto timepassed = _conn_timer.elapsed_time();
+    if (_connect_retval == NSAPI_ERROR_OK
+            || _connect_retval == NSAPI_ERROR_AUTH_FAILURE
+            || _connect_retval == NSAPI_ERROR_NO_SSID
+            || ((_if_blocking == true) && (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT))) {
+        _connect_event_id = 0;
+        _conn_timer.stop();
+        if (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT && _connect_retval != NSAPI_ERROR_OK) {
+            _connect_retval = NSAPI_ERROR_CONNECTION_TIMEOUT;
+        }
+        if (_connect_retval != NSAPI_ERROR_OK) {
+            _ninaw132.uart_enable_input(false);
+            _software_conn_stat = IFACE_STATUS_DISCONNECTED;
+        }
+#if MBED_CONF_RTOS_PRESENT
+        _if_connected.notify_all();
+#endif
+    } else {
+        // Postpone to give other stuff time to run
+        _connect_event_id = _global_event_queue->call_in(NINAW132_INTERFACE_CONNECT_INTERVAL,
+                                                         callback(this, &NINAW132Interface::_connect_async));
+        if (!_connect_event_id) {
+            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
+                       "NINAW132Interface::_connect_async(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+        }
+    }
     _cmutex.unlock();
-//     nsapi_error_t status = _init();
-//     if (status != NSAPI_ERROR_OK) {
-//         _connect_retval = status;
-//         _ninaw132.uart_enable_input(false);
-//         _software_conn_stat = IFACE_STATUS_DISCONNECTED;
-//         //_conn_stat_cb will be called from refresh_conn_state_cb
-//         return;
-//     }
 
-//     if (_dhcp && !_ninaw132.dhcp(true, 1)) {
-//         _connect_retval = NSAPI_ERROR_DHCP_FAILURE;
-//         _ninaw132.uart_enable_input(false);
-//         _software_conn_stat = IFACE_STATUS_DISCONNECTED;
-//         //_conn_stat_cb will be called from refresh_conn_state_cb
-//         return;
-//     }
-//     _cmutex.lock();
-//     if (!_connect_event_id) {
-//         tr_debug("_connect_async(): Cancelled.");
-//         _cmutex.unlock();
-//         return;
-//     }
-
-//     if (_ap_sec != NSAPI_SECURITY_NONE) {
-//         _ninaw132.authentification_type(_ap_sec);
-//     }
-
-
-//     _connect_retval = _ninaw132.connect(ap_ssid, ap_pass);
-//     auto timepassed = _conn_timer.elapsed_time();
-//     if (_connect_retval == NSAPI_ERROR_OK
-//             || _connect_retval == NSAPI_ERROR_AUTH_FAILURE
-//             || _connect_retval == NSAPI_ERROR_NO_SSID
-//             || ((_if_blocking == true) && (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT))) {
-//         _connect_event_id = 0;
-//         _conn_timer.stop();
-//         if (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT && _connect_retval != NSAPI_ERROR_OK) {
-//             _connect_retval = NSAPI_ERROR_CONNECTION_TIMEOUT;
-//         }
-//         if (_connect_retval != NSAPI_ERROR_OK) {
-//             _ninaw132.uart_enable_input(false);
-//             _software_conn_stat = IFACE_STATUS_DISCONNECTED;
-//         }
-// #if MBED_CONF_RTOS_PRESENT
-//         _if_connected.notify_all();
-// #endif
-//     } else {
-//         // Postpone to give other stuff time to run
-//         _connect_event_id = _global_event_queue->call_in(NINAW132_INTERFACE_CONNECT_INTERVAL,
-//                                                          callback(this, &NINAW132Interface::_connect_async));
-//         if (!_connect_event_id) {
-//             MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
-//                        "NINAW132Interface::_connect_async(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
-//         }
-//     }
-//     _cmutex.unlock();
-
-//     if (_connect_event_id == 0) {
-//         if (_conn_stat_cb) {
-//             _conn_stat_cb(NSAPI_EVENT_CONNECTION_STATUS_CHANGE, _conn_stat);
-//         }
-//         if (_conn_stat == NSAPI_STATUS_GLOBAL_UP || _conn_stat == NSAPI_STATUS_LOCAL_UP) {
-//             _software_conn_stat = IFACE_STATUS_CONNECTED;
-//         }
-//     }
+    if (_connect_event_id == 0) {
+        if (_conn_stat_cb) {
+            _conn_stat_cb(NSAPI_EVENT_CONNECTION_STATUS_CHANGE, _conn_stat);
+        }
+        if (_conn_stat == NSAPI_STATUS_GLOBAL_UP || _conn_stat == NSAPI_STATUS_LOCAL_UP) {
+            _software_conn_stat = IFACE_STATUS_CONNECTED;
+        }
+    }
 }
 
 int NINAW132Interface::connect()
@@ -647,13 +658,12 @@ int8_t NINAW132Interface::get_rssi()
         _ninaw132.uart_enable_input(true);
     }
 
-    int8_t ret = _ninaw132.rssi();
-
     if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
         _ninaw132.uart_enable_input(false);
+        return 0;
     }
 
-    return ret;
+    return _ninaw132.rssi();
 }
 
 int NINAW132Interface::scan(WiFiAccessPoint *res, unsigned count)
@@ -1191,7 +1201,7 @@ void NINAW132Interface::refresh_conn_state_cb()
         return;
     }
 
-    tr_debug("refresh_conn_state_cb(): Changed to %d.", _conn_stat);
+    debug("refresh_conn_state_cb(): Changed to %d.", _conn_stat);
 
     if (_conn_stat_cb) {
         // _conn_stat_cb will be called in _connect_async or disconnect_assync to avoid race condition

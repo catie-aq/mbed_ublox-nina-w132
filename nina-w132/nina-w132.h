@@ -549,6 +549,7 @@ private:
     void _oob_send_fail_received();
     void _oob_connection();
     void _oob_disconnection();
+    void _oob_link_disconnected();
 
     // OOB state variables
     int _connect_error;
