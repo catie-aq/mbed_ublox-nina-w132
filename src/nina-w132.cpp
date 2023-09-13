@@ -85,6 +85,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, bool debug, PinName rts, PinName cts)
     // _parser.oob("SEND FAIL", callback(this, &NINAW132::_oob_send_fail_received));
     _parser.oob("+UUNU:", callback(this, &NINAW132::_oob_connection));
     _parser.oob("+UUND:", callback(this, &NINAW132::_oob_disconnection));
+    _parser.oob("+UUWLD:", callback(this, &NINAW132::_oob_link_disconnected));
 
     uart_enable_input(true);
 
@@ -114,7 +115,7 @@ bool NINAW132::at_available()
         if (ready) {
             break;
         }
-        tr_debug("at_available(): Waiting AT response.");
+        debug("at_available(): Waiting AT response.");
     }
     // Switch baud-rate from default one to assigned one
     if (MBED_CONF_NINA_W132_SERIAL_BAUDRATE !=  NINA_W132_DEFAULT_SERIAL_BAUDRATE) {
@@ -164,20 +165,20 @@ struct NINAW132::fw_at_version NINAW132::at_version()
 bool NINAW132::stop_uart_hw_flow_ctrl(bool board_only)
 {
     bool done = true;
-#if DEVICE_SERIAL_FC
+// #if DEVICE_SERIAL_FC
 
-    if (_serial_rts != NC || _serial_cts != NC) {
-        // Stop board's flow control
-        _serial.set_flow_control(SerialBase::Disabled, _serial_rts, _serial_cts);
+//    if (_serial_rts != NC || _serial_cts != NC) {
+//         // Stop board's flow control
+//         _serial.set_flow_control(SerialBase::Disabled, _serial_rts, _serial_cts);
 
-        if (!board_only) {
-            // Stop NINAW132's flow control
-            done = _parser.send("AT+UART_CUR=%u,2,8,1,1,1", MBED_CONF_NINA_W132_SERIAL_BAUDRATE)
-                   && _parser.recv("OK\n");
-        }
-    }
+//         if (!board_only) {
+//             // Stop NINAW132's flow control
+//             done = _parser.send("AT+UART_CUR=%u,2,8,1,1,1", MBED_CONF_NINA_W132_SERIAL_BAUDRATE)
+//                    && _parser.recv("OK\n");
+//         }
+//     }
 
-#endif
+// #endif
     return done;
 }
 
@@ -185,42 +186,49 @@ bool NINAW132::start_uart_hw_flow_ctrl(void)
 {
     bool done = true;
 
-#if DEVICE_SERIAL_FC
-    _smutex.lock();
-    if (_serial_rts != NC && _serial_cts != NC) {
-        // Start NINAW132's flow control
-        done = _parser.send("AT+UART_CUR=%u,1,8,1,1,1", MBED_CONF_NINA_W132_SERIAL_BAUDRATE)
-               && _parser.recv("OK\n");
+// #if DEVICE_SERIAL_FC
+//     _smutex.lock();
+//     if (_serial_rts != NC && _serial_cts != NC) {
+//         // Start NINAW132's flow control
+//         done = _parser.send("AT+UART_CUR=%u,1,8,1,1,1", MBED_CONF_NINA_W132_SERIAL_BAUDRATE)
+//                && _parser.recv("OK\n");
 
-        if (done) {
-            // Start board's flow control
-            _serial.set_flow_control(SerialBase::RTSCTS, _serial_rts, _serial_cts);
-        }
+//         if (done) {
+//             // Start board's flow control
+//             _serial.set_flow_control(SerialBase::RTSCTS, _serial_rts, _serial_cts);
+//         }
 
-    }
-    _smutex.unlock();
+//     }
+//     _smutex.unlock();
 
-    if (!done) {
-        tr_debug("start_uart_hw_flow_ctrl(): Enable UART HW flow control: FAIL.");
-    }
-#else
-    if (_serial_rts != NC || _serial_cts != NC) {
-        done = false;
-    }
-#endif
+//     if (!done) {
+//         debug("start_uart_hw_flow_ctrl(): Enable UART HW flow control: FAIL.");
+//     }
+// #else
+//     if (_serial_rts != NC || _serial_cts != NC) {
+//         done = false;
+//     }
+// #endif
     return done;
 }
 
 bool NINAW132::startup(int mode)
 {
+    bool done = false;
     if (!(mode == (int)WIFIMODE_STATION || mode == (int)WIFIMODE_ACCESS_POINT)) {
         return false;
     }
 
     _smutex.lock();
     set_timeout(NINA_W132_CONNECT_TIMEOUT);
-    bool done = _parser.send("AT+UMSM=%d", mode)
+    if (mode == (int)WIFIMODE_STATION) {
+        done = _parser.send("AT+UWSC=0,0,1")
                 && _parser.recv("OK\n");
+    } else {
+        done = _parser.send("AT+UWAPC=0,0,1")
+                    && _parser.recv("OK\n");
+    }
+    
     set_timeout(); //Restore default
     _smutex.unlock();
 
@@ -239,7 +247,7 @@ bool NINAW132::reset(void)
     set_timeout(NINA_W132_RECV_TIMEOUT);
     for (int i = 0; i < 2; i++) {
         if (!_parser.send("AT+CPWROFF") || !_parser.recv("OK\n")) {
-            tr_debug("reset(): AT+RST failed or no response.");
+            debug("reset(): AT+RST failed or no response.");
             continue;
         }
 
@@ -257,7 +265,7 @@ bool NINAW132::reset(void)
         }
     }
 
-    tr_debug("reset(): Done: %s.", done ? "OK" : "FAIL");
+    debug("reset(): Done: %s.", done ? "OK" : "FAIL");
 
     _clear_socket_packets(NINA_W132_ALL_SOCKET_IDS);
     _sock_sending_id = -1;
@@ -304,7 +312,7 @@ bool NINAW132::dhcp(bool enabled, int mode)
 
     if (mode == WIFIMODE_STATION) {
         done = _parser.send("AT+UWSC=0,100,%d", enabled ? 2 : 0)
-                && _parser.recv("OK");
+                && _parser.recv("OK\n");
     } else {
         // force to success
         done = true;
@@ -391,7 +399,7 @@ bool NINAW132::disconnect(void)
 bool NINAW132::ip_info_print(int enable)
 {
     _smutex.lock();
-    _disconnect = true;
+    // _disconnect = true;
     bool done = _parser.send("AT+CIPDINFO=%d", enable) && _parser.recv("OK\n");
     _smutex.unlock();
 
@@ -402,15 +410,15 @@ bool NINAW132::ip_info_print(int enable)
 const char *NINAW132::ip_addr(void)
 {
     _smutex.lock();
-    // set_timeout(NINA_W132_CONNECT_TIMEOUT);
-    // if (!(_parser.send("AT+CIFSR")
-    //         && _parser.recv("+CIFSR:STAIP,\"%15[^\"]\"", _ip_buffer)
-    //         && _parser.recv("OK\n"))) {
-    //     _smutex.unlock();
-    //     return 0;
-    // }
-    // set_timeout();
-    // _smutex.unlock();
+    set_timeout(NINA_W132_CONNECT_TIMEOUT);
+    if (!(_parser.send("AT+UNSTAT=0,101")
+            && _parser.recv("+UNSTAT:0,101,%15s\r\n", _ip_buffer)
+            && _parser.recv("OK"))) {
+        _smutex.unlock();
+        return 0;
+    }
+    set_timeout();
+    _smutex.unlock();
 
     return _ip_buffer;
 }
@@ -443,84 +451,65 @@ bool NINAW132::set_ip_addr(const char *ip, const char *gateway, const char *netm
 
 const char *NINAW132::mac_addr(void)
 {
-    // _smutex.lock();
-    // if (!(_parser.send("AT+CIFSR")
-    //         && _parser.recv("+CIFSR:STAMAC,\"%17[^\"]\"", _mac_buffer)
-    //         && _parser.recv("OK\n"))) {
-    //     _smutex.unlock();
-    //     return 0;
-    // }
-    // _smutex.unlock();
+    _smutex.lock();
+    if (!(_parser.send("AT+UWAPMACADDR")
+            && _parser.recv("+UWAPMACADDR:%12s\r\n", _mac_buffer)
+            && _parser.recv("OK"))) {
+        _smutex.unlock();
+        return 0;
+    }
+
+    set_timeout();
+    _smutex.unlock();
 
     return _mac_buffer;
 }
 
 const char *NINAW132::gateway()
 {
-    // _smutex.lock();
-    // if (!(_parser.send("AT+CIPSTA_CUR?")
-    //         && _parser.recv("+CIPSTA_CUR:gateway:\"%15[^\"]\"", _gateway_buffer)
-    //         && _parser.recv("OK\n"))) {
-    //     _smutex.unlock();
-    //     return 0;
-    // }
-    // _smutex.unlock();
+    _smutex.lock();
+    if (!(_parser.send("AT+UNSTAT=0,103")
+            && _parser.recv("+UNSTAT:0,103,%15s\r\n", _gateway_buffer)
+            && _parser.recv("OK"))) {
+        _smutex.unlock();
+        return 0;
+    }
+    set_timeout();
+    _smutex.unlock();
 
     return _gateway_buffer;
 }
 
 const char *NINAW132::netmask()
 {
-    // _smutex.lock();
-    // if (!(_parser.send("AT+CIPSTA_CUR?")
-    //         && _parser.recv("+CIPSTA_CUR:netmask:\"%15[^\"]\"", _netmask_buffer)
-    //         && _parser.recv("OK\n"))) {
-    //     _smutex.unlock();
-    //     return 0;
-    // }
-    // _smutex.unlock();
+    _smutex.lock();
+    if (!(_parser.send("AT+UNSTAT=0,102")
+            && _parser.recv("+UNSTAT:0,102,%15s\r\n", _netmask_buffer)
+            && _parser.recv("OK"))) {
+        _smutex.unlock();
+        return 0;
+    }
+    set_timeout();
+    _smutex.unlock();
 
     return _netmask_buffer;
 }
 
 int8_t NINAW132::rssi()
 {
-    int8_t rssi = 0;
-    char bssid[18];
+    int8_t rssi_value = 0;
 
-    // _smutex.lock();
-    // set_timeout(NINA_W132_CONNECT_TIMEOUT);
-    // if (!(_parser.send("AT+CWJAP_CUR?")
-    //         && _parser.recv("+CWJAP_CUR:\"%*[^\"]\",\"%17[^\"]\"", bssid)
-    //         && _parser.recv("OK\n"))) {
-    //     _smutex.unlock();
-    //     return 0;
-    // }
+    _smutex.lock();
+    if (!(_parser.send("AT+UWSSTAT=6")
+            && _parser.recv("+UWSSTAT:6,%d\r\n", &rssi_value)
+            && _parser.recv("OK"))) {
+        _smutex.unlock();
+        return 0;
+    }
+    set_timeout();
+    _smutex.unlock();
 
-    // set_timeout();
-    // _smutex.unlock();
-
-    // WiFiAccessPoint ap[1];
-    // _scan_r.res = ap;
-    // _scan_r.limit = 1;
-    // _scan_r.cnt = 0;
-
-    // _smutex.lock();
-    // set_timeout(NINA_W132_CONNECT_TIMEOUT);
-    // if (!(_parser.send("AT+CWLAP=\"\",\"%s\",", bssid)
-    //         && _parser.recv("OK\n"))) {
-    //     rssi = 0;
-    // } else if (_scan_r.cnt == 1) {
-    //     //All OK so read and return rssi
-    //     rssi = ap[0].get_rssi();
-    // }
-
-    // _scan_r.cnt = 0;
-    // _scan_r.res = NULL;
-    // set_timeout();
-    // _smutex.unlock();
-
-    return rssi;
+    return rssi_value;
 }
 
 int NINAW132::scan(WiFiAccessPoint *res, unsigned limit, scan_mode mode, duration<unsigned, milli> t_max, duration<unsigned, milli> t_min)
@@ -615,17 +604,17 @@ nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port, int local_p
 
     _smutex.unlock();
 
-    tr_debug("open_udp(): UDP socket %d opened: %s.", id, (_sock_i[id].open ? "true" : "false"));
+    debug("open_udp(): UDP socket %d opened: %s.", id, (_sock_i[id].open ? "true" : "false"));
 
     return done ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
 
 nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepalive)
 {
-    static const char *type = "TCP";
+    static const char *type = "tcp";
     bool done = false;
 
-    ip_info_print(1);
+    //ip_info_print(1);
 
     if (!addr) {
         return NSAPI_ERROR_PARAMETER;
@@ -645,9 +634,9 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
 
     for (int i = 0; i < 2; i++) {
         if (keepalive) {
-            done = _parser.send("AT+CIPSTART=%d,\"%s\",\"%s\",%d,%d", id, type, addr, port, keepalive);
+            done = _parser.send("AT+UDDRP=%d,\"%s//%s:%d/?flush_tx=2\"", id, type, addr, port, keepalive);
         } else {
-            done = _parser.send("AT+CIPSTART=%d,\"%s\",\"%s\",%d", id, type, addr, port);
+            done = _parser.send("AT+UDDRP=%d,\"%s//%s:%d\"", id, type, addr, port, keepalive);
         }
 
         if (done) {
@@ -674,7 +663,7 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
 
     _smutex.unlock();
 
-    tr_debug("open_tcp: TCP socket %d opened: %s . ", id, (_sock_i[id].open ? "true" : "false"));
+    debug("open_tcp: TCP socket %d opened: %s . ", id, (_sock_i[id].open ? "true" : "false"));
 
     return done ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
@@ -697,10 +686,10 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     if (_sock_i[id].proto == NSAPI_TCP) {
         if (_sock_sending_id >= 0 && _sock_sending_id < SOCKET_COUNT) {
             if (!_sock_i[id].send_fail) {
-                tr_debug("send(): Previous packet (socket %d) was not yet ACK-ed with SEND OK.", _sock_sending_id);
+                debug("send(): Previous packet (socket %d) was not yet ACK-ed with SEND OK.", _sock_sending_id);
                 return NSAPI_ERROR_WOULD_BLOCK;
             } else {
-                tr_debug("send(): Previous packet (socket %d) failed.", id);
+                debug("send(): Previous packet (socket %d) failed.", id);
                 return NSAPI_ERROR_DEVICE_ERROR;
             }
         }
@@ -715,7 +704,7 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
         amount = 2048;
         // Datagram must stay intact
     } else if (amount > 2048 && _sock_i[id].proto == NSAPI_UDP) {
-        tr_debug("send(): UDP datagram maximum size is 2048 .");
+        debug("send(): UDP datagram maximum size is 2048 .");
         return NSAPI_ERROR_PARAMETER;
     }
 
@@ -727,14 +716,14 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     set_timeout(NINA_W132_SEND_TIMEOUT);
     _busy = false;
     _error = false;
-    if (!_parser.send("AT+CIPSEND=%d,%" PRIu32, id, amount)) {
-        tr_debug("send(): AT+CIPSEND failed.");
+    if (!_parser.send("AT+UDATW=%d,%" PRIu32, id, amount)) {
+        debug("send(): AT+CIPSEND failed.");
         goto END;
     }
 
     if (!_parser.recv(">")) {
         // This means NINAW132 hasn't even started to receive data
-        tr_debug("send(): Didn't get \">\"");
+        debug("send(): Didn't get \">\"");
         if (_sock_i[id].proto == NSAPI_TCP) {
             ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
         } else if (_sock_i[id].proto == NSAPI_UDP) {
@@ -744,7 +733,7 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     }
 
     if (_parser.write((char *)data, (int)amount) < 0) {
-        tr_debug("send(): Failed to write serial data");
+        debug("send(): Failed to write serial data");
         // Serial is not working, serious error, reset needed.
         ret = NSAPI_ERROR_DEVICE_ERROR;
         goto END;
@@ -752,14 +741,14 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
 
     // The "Recv X bytes" is not documented.
     if (!_parser.recv("Recv %d bytes", &bytes_confirmed)) {
-        tr_debug("send(): Bytes not confirmed.");
+        debug("send(): Bytes not confirmed.");
         if (_sock_i[id].proto == NSAPI_TCP) {
             ret = NSAPI_ERROR_WOULD_BLOCK;
         } else if (_sock_i[id].proto == NSAPI_UDP) {
             ret = NSAPI_ERROR_NO_MEMORY;
         }
     } else if (bytes_confirmed != (int)amount && _sock_i[id].proto == NSAPI_UDP) {
-        tr_debug("send(): Error: confirmed %d bytes, but expected %d.", bytes_confirmed, amount);
+        debug("send(): Error: confirmed %d bytes, but expected %d.", bytes_confirmed, amount);
         ret = NSAPI_ERROR_DEVICE_ERROR;
     } else {
         // TCP can accept partial writes (if they ever happen)
@@ -773,14 +762,14 @@ END:
     // NOTE: We cannot return NSAPI_ERROR_WOULD_BLOCK when "Recv X bytes" has reached, otherwise duplicate data send.
     if (_busy && ret < 0) {
         ret = NSAPI_ERROR_WOULD_BLOCK;
-        tr_debug("send(): Modem busy.");
+        debug("send(): Modem busy.");
     }
 
     if (_error) {
         // FIXME: Not sure clear or not of _error. See it as device error and it can recover only via reset?
         _sock_sending_id = -1;
         ret = NSAPI_ERROR_CONNECTION_LOST;
-        tr_debug("send(): Connection disrupted.");
+        debug("send(): Connection disrupted.");
     }
 
     if (_sock_i[id].send_fail) {
@@ -790,13 +779,13 @@ END:
         } else {
             ret = NSAPI_ERROR_NO_MEMORY;
         }
-        tr_debug("send(): SEND FAIL received.");
+        debug("send(): SEND FAIL received.");
     }
 
     if (!_sock_i[id].open && ret < 0) {
         _sock_sending_id = -1;
         ret = NSAPI_ERROR_CONNECTION_LOST;
-        tr_debug("send(): Socket %d closed abruptly.", id);
+        debug("send(): Socket %d closed abruptly.", id);
     }
 
     set_timeout();
@@ -840,13 +829,13 @@ void NINAW132::_oob_packet_hdlr()
     pdu_len = sizeof(struct packet) + amount;
 
     if ((_heap_usage + pdu_len) > MBED_CONF_NINA_W132_SOCKET_BUFSIZE) {
-        tr_debug("\"nina-w132.socket-bufsize\"-limit exceeded, packet dropped");
+        debug("\"nina-w132.socket-bufsize\"-limit exceeded, packet dropped");
         return;
     }
 
     struct packet *packet = (struct packet *)malloc(pdu_len);
     if (!packet) {
-        tr_debug("_oob_packet_hdlr(): Out of memory, unable to allocate memory for packet.");
+        debug("_oob_packet_hdlr(): Out of memory, unable to allocate memory for packet.");
         return;
     }
     _heap_usage += pdu_len;
@@ -940,7 +929,7 @@ int32_t NINAW132::_recv_tcp_passive(int id, void *data, uint32_t amount, duratio
 BUSY:
     _process_oob(NINA_W132_RECV_TIMEOUT, true);
     if (_busy) {
-        tr_debug("_recv_tcp_passive(): Modem busy.");
+        debug("_recv_tcp_passive(): Modem busy.");
         ret = NSAPI_ERROR_WOULD_BLOCK;
     } else {
         tr_error("_recv_tcp_passive(): Unknown state.");
@@ -1106,7 +1095,7 @@ bool NINAW132::close(int id)
                     _clear_socket_sending(id);
                     _smutex.unlock();
                     // NINAW132 has a habit that it might close a socket on its own.
-                    tr_debug("close(%d): socket close OK with UNLINK ERROR", id);
+                    debug("close(%d): socket close OK with UNLINK ERROR", id);
                     return true;
                 }
             } else {
@@ -1115,14 +1104,14 @@ bool NINAW132::close(int id)
                 // Closed, so this socket escapes from SEND FAIL status
                 _clear_socket_sending(id);
                 _smutex.unlock();
-                tr_debug("close(%d): socket close OK with AT+CIPCLOSE OK", id);
+                debug("close(%d): socket close OK with AT+CIPCLOSE OK", id);
                 return true;
             }
         }
         _smutex.unlock();
     }
 
-    tr_debug("close(%d): socket close FAIL'ed (spurious close)", id);
+    debug("close(%d): socket close FAIL'ed (spurious close)", id);
     return false;
 }
 
@@ -1212,7 +1201,7 @@ bool NINAW132::get_sntp_time(std::tm *t)
     int ret = sscanf(buf, "%s %s %d %d:%d:%d %d",
                      wday, mon, &mday, &hour, &min, &sec, &year);
     if (ret != 7) {
-        tr_debug("get_sntp_time(): sscanf returned %d", ret);
+        debug("get_sntp_time(): sscanf returned %d", ret);
         return false;
     }
 
@@ -1237,7 +1226,7 @@ bool NINAW132::get_sntp_time(std::tm *t)
     } else if (strcmp(wday, "Sun") == 0) {
         t->tm_wday = 6;
     } else {
-        tr_debug("get_sntp_time(): Invalid weekday: %s", wday);
+        debug("get_sntp_time(): Invalid weekday: %s", wday);
         return false;
     }
 
@@ -1267,7 +1256,7 @@ bool NINAW132::get_sntp_time(std::tm *t)
     } else if (strcmp(mon, "Dec") == 0) {
         t->tm_mon = 11;
     } else {
-        tr_debug("get_sntp_time(): Invalid month: %s", mon);
+        debug("get_sntp_time(): Invalid month: %s", mon);
         return false;
     }
 
@@ -1332,7 +1321,7 @@ void NINAW132::_oob_watchdog_reset()
 
 void NINAW132::_oob_ready()
 {
-    tr_debug("ready to use AT commands.");
+    debug("ready to use AT commands.");
 }
 
 void NINAW132::_oob_busy()
@@ -1340,9 +1329,9 @@ void NINAW132::_oob_busy()
     char status;
     if (_parser.scanf("%c...\n", &status)) {
         if (status == 's') {
-            tr_debug("_oob_busy(): Busy s...");
+            debug("_oob_busy(): Busy s...");
         } else if (status == 'p') {
-            tr_debug("_oob_busy(): Busy p...");
+            debug("_oob_busy(): Busy p...");
         } else {
             tr_error("_oob_busy(): unrecognized busy state '%c...'", status);
             MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_EBADMSG), \
@@ -1423,7 +1412,7 @@ void NINAW132::_oob_socket0_closed()
     _sock_i[id].open = false;
     // Closed, so this socket escapes from SEND FAIL status
     _clear_socket_sending(id);
-    tr_debug("_oob_socket0_closed(): Socket %d closed.", id);
+    debug("_oob_socket0_closed(): Socket %d closed.", id);
 }
 
 void NINAW132::_oob_socket1_closed()
@@ -1432,7 +1421,7 @@ void NINAW132::_oob_socket1_closed()
     _sock_i[id].open = false;
     // Closed, so this socket escapes from SEND FAIL status
     _clear_socket_sending(id);
-    tr_debug("_oob_socket1_closed(): Socket %d closed.", id);
+    debug("_oob_socket1_closed(): Socket %d closed.", id);
 }
 
 void NINAW132::_oob_socket2_closed()
@@ -1440,7 +1429,7 @@ void NINAW132::_oob_socket2_closed()
     static const int id = 2;
     _sock_i[id].open = false;
     _clear_socket_sending(id);
-    tr_debug("_oob_socket2_closed(): Socket %d closed.", id);
+    debug("_oob_socket2_closed(): Socket %d closed.", id);
 }
 
 void NINAW132::_oob_socket3_closed()
@@ -1448,7 +1437,7 @@ void NINAW132::_oob_socket3_closed()
     static const int id = 3;
     _sock_i[id].open = false;
     _clear_socket_sending(id);
-    tr_debug("_oob_socket3_closed(): %d closed.", id);
+    debug("_oob_socket3_closed(): %d closed.", id);
 }
 
 void NINAW132::_oob_socket4_closed()
@@ -1457,7 +1446,7 @@ void NINAW132::_oob_socket4_closed()
     _sock_i[id].open = false;
     // Closed, so this socket escapes from SEND FAIL status
     _clear_socket_sending(id);
-    tr_debug("_oob_socket0_closed(): Socket %d closed.", id);
+    debug("_oob_socket0_closed(): Socket %d closed.", id);
 }
 
 void NINAW132::_oob_connection()
@@ -1471,10 +1460,20 @@ void NINAW132::_oob_connection()
 
 void NINAW132::_oob_disconnection()
 {
-    int reason = 0;
-    int session_id = 0;
+    _conn_status = NSAPI_STATUS_DISCONNECTED;
+    _disconnect = false;
 
-    if (_parser.recv("%d, %d\n", &session_id, &reason)) {
+    MBED_ASSERT(_conn_stat_cb);
+    _conn_stat_cb();
+}
+
+void NINAW132::_oob_link_disconnected()
+{
+    // TODO
+    int reason = 0;
+    int connection_id = 0;
+
+    if (_parser.recv("%d, %d\n", &connection_id, &reason)) {
         _disconnection_reason = reason;
         if (reason == SECURITY_PROBLEM) {
             //force disconnection
@@ -1482,12 +1481,6 @@ void NINAW132::_oob_disconnection()
             return;
         }
     }
-
-    _conn_status = NSAPI_STATUS_DISCONNECTED;
-    _disconnect = false;
-
-    MBED_ASSERT(_conn_stat_cb);
-    _conn_stat_cb();
 }
 
 // void NINAW132::_oob_connection_status()
@@ -1515,7 +1508,7 @@ void NINAW132::_oob_disconnection()
 //         if (!disconnect()) {
 //             tr_warning("_oob_connection_status(): Driver initiated disconnect failed.");
 //         } else {
-//             tr_debug("_oob_connection_status(): Disconnected.");
+//             debug("_oob_connection_status(): Disconnected.");
 //         }
 //         _conn_status = NSAPI_STATUS_ERROR_UNSUPPORTED;
 //     }
@@ -1526,13 +1519,13 @@ void NINAW132::_oob_disconnection()
 
 void NINAW132::_oob_send_ok_received()
 {
-    tr_debug("_oob_send_ok_received called for socket %d", _sock_sending_id);
+    debug("_oob_send_ok_received called for socket %d", _sock_sending_id);
     _sock_sending_id = -1;
 }
 
 void NINAW132::_oob_send_fail_received()
 {
-    tr_debug("_oob_send_fail_received called for socket %d", _sock_sending_id);
+    debug("_oob_send_fail_received called for socket %d", _sock_sending_id);
     if (_sock_sending_id >= 0 && _sock_sending_id < SOCKET_COUNT) {
         _sock_i[_sock_sending_id].send_fail = true;
     }
