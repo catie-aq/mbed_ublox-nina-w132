@@ -15,126 +15,52 @@
  * limitations under the License.
  */
 
-// #if DEVICE_SERIAL && DEVICE_INTERRUPTIN && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_API_PRESENT)
+// #if DEVICE_SERIAL && DEVICE_INTERRUPTIN && defined(MBED_CONF_EVENTS_PRESENT) &&
+// defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_API_PRESENT)
 
-#include <string.h>
 #include <stdint.h>
+#include <string.h>
 
-#include "nina-w132.h"
 #include "nina-w132-interface.h"
-#include "events/EventQueue.h"
-#include "events/mbed_shared_queues.h"
-#include "netsocket/nsapi_types.h"
-#include "mbed_trace.h"
-#include "platform/Callback.h"
-#include "platform/mbed_atomic.h"
-#include "platform/mbed_debug.h"
-#include "rtos/ThisThread.h"
 
 using namespace std::chrono;
 
-#ifndef MBED_CONF_NINAW132_DEBUG
-#define MBED_CONF_NINAW132_DEBUG false
-#endif
-
-#ifndef MBED_CONF_NINAW132_RTS
-#define MBED_CONF_NINAW132_RTS NC
-#endif
-
-#ifndef MBED_CONF_NINAW132_CTS
-#define MBED_CONF_NINAW132_CTS NC
-#endif
-
-#ifndef MBED_CONF_NINAW132_RST
-#define MBED_CONF_NINAW132_RST NC
-#endif
-
-#ifndef MBED_CONF_NINAW132_PWR
-#define MBED_CONF_NINAW132_PWR NC
-#endif
-
-#define TRACE_GROUP  "ESPI" // NINAW132 Interface
-
-#define NINAW132_WIFI_IF_NAME "es0"
-
-#define LOCAL_ADDR "127.0.0.1"
+#define NINAW132_WIFI_IF_NAME "ni0"
 
 using namespace mbed;
 using namespace rtos;
 
-#if defined MBED_CONF_NINAW132_TX && defined MBED_CONF_NINAW132_RX
-NINAW132Interface::NINAW132Interface()
-    : _ninaw132(MBED_CONF_NINAW132_TX, MBED_CONF_NINAW132_RX, MBED_CONF_NINAW132_DEBUG, MBED_CONF_NINAW132_RTS, MBED_CONF_NINAW132_CTS),
-      _rst_pin(MBED_CONF_NINAW132_RST), // Notice that Pin7 CH_EN cannot be left floating if used as reset
-      _pwr_pin(MBED_CONF_NINAW132_PWR),
-      _ap_sec(NSAPI_SECURITY_UNKNOWN),
-      _if_blocking(true),
-#if MBED_CONF_RTOS_PRESENT
-      _if_connected(_cmutex),
-#endif
-      _initialized(false),
-      _connect_retval(NSAPI_ERROR_OK),
-      _disconnect_retval(NSAPI_ERROR_OK),
-      _conn_stat(NSAPI_STATUS_DISCONNECTED),
-      _conn_stat_cb(),
-      _global_event_queue(mbed_event_queue()), // Needs to be set before attaching event() to SIGIO
-      _oob_event_id(0),
-      _connect_event_id(0),
-      _disconnect_event_id(0),
-      _software_conn_stat(IFACE_STATUS_DISCONNECTED),
-      _dhcp(true)
-{
-    memset(_cbs, 0, sizeof(_cbs));
-    memset(ap_ssid, 0, sizeof(ap_ssid));
-    memset(ap_pass, 0, sizeof(ap_pass));
-
-    _ch_info.track_ap = true;
-    strncpy(_ch_info.country_code, MBED_CONF_NINAW132_COUNTRY_CODE, sizeof(_ch_info.country_code));
-    _ch_info.channel_start = MBED_CONF_NINAW132_CHANNEL_START;
-    _ch_info.channels = MBED_CONF_NINAW132_CHANNELS;
-
-    _ninaw132.sigio(this, &NINAW132Interface::event);
-    _ninaw132.set_timeout();
-    _ninaw132.attach(this, &NINAW132Interface::refresh_conn_state_cb);
-
-    for (int i = 0; i < NINAW132_SOCKET_COUNT; i++) {
-        _sock_i[i].open = false;
-        _sock_i[i].sport = 0;
-    }
-    _ninaw132.uart_enable_input(false);
-}
-#endif
+// Set 1 to force debug information
+#define ninaw132_interface_debug 0
 
 // NINAW132Interface implementation
-NINAW132Interface::NINAW132Interface(PinName tx, PinName rx, bool debug, PinName rts, PinName cts, PinName rst, PinName pwr)
-    : _ninaw132(tx, rx, debug, rts, cts),
-      _rst_pin(rst),
-      _pwr_pin(pwr),
-      _ap_sec(NSAPI_SECURITY_UNKNOWN),
-      _if_blocking(true),
+NINAW132Interface::NINAW132Interface(bool debug):
+        _ninaw132(MBED_CONF_NINA_W132_TX,
+                MBED_CONF_NINA_W132_RX,
+                MBED_CONF_NINA_W132_RST,
+                MBED_CONF_NINA_W132_DEBUG),
+        _ap_sec(NSAPI_SECURITY_UNKNOWN),
+        _if_blocking(true),
 #if MBED_CONF_RTOS_PRESENT
-      _if_connected(_cmutex),
+        _if_connected(_cmutex),
 #endif
-      _initialized(false),
-      _connect_retval(NSAPI_ERROR_OK),
-      _disconnect_retval(NSAPI_ERROR_OK),
-      _conn_stat(NSAPI_STATUS_DISCONNECTED),
-      _conn_stat_cb(),
-      _global_event_queue(mbed_event_queue()), // Needs to be set before attaching event() to SIGIO
-      _oob_event_id(0),
-      _connect_event_id(0),
-      _disconnect_event_id(0),
-      _software_conn_stat(IFACE_STATUS_DISCONNECTED),
-      _dhcp(true)
+        _initialized(false),
+        _connect_retval(NSAPI_ERROR_OK),
+        _disconnect_retval(NSAPI_ERROR_OK),
+        _conn_stat(NSAPI_STATUS_DISCONNECTED),
+        _conn_stat_cb(),
+        _global_event_queue(
+                mbed_event_queue()), // Needs to be set before attaching event() to SIGIO
+        _oob_event_id(0),
+        _connect_event_id(0),
+        _disconnect_event_id(0),
+        _software_conn_stat(IFACE_STATUS_DISCONNECTED),
+        _dhcp(true)
 {
+    _ninaw132_interface_debug = ninaw132_interface_debug || debug;
     memset(_cbs, 0, sizeof(_cbs));
     memset(ap_ssid, 0, sizeof(ap_ssid));
     memset(ap_pass, 0, sizeof(ap_pass));
-
-    _ch_info.track_ap = true;
-    strncpy(_ch_info.country_code, MBED_CONF_NINAW132_COUNTRY_CODE, sizeof(_ch_info.country_code));
-    _ch_info.channel_start = MBED_CONF_NINAW132_CHANNEL_START;
-    _ch_info.channels = MBED_CONF_NINAW132_CHANNELS;
 
     _ninaw132.sigio(this, &NINAW132Interface::event);
     _ninaw132.set_timeout();
@@ -144,7 +70,8 @@ NINAW132Interface::NINAW132Interface(PinName tx, PinName rx, bool debug, PinName
         _sock_i[i].open = false;
         _sock_i[i].sport = 0;
     }
-    _ninaw132.uart_enable_input(false);
+
+    _global_event_queue->call(callback(this, &NINAW132Interface::_init));
 }
 
 NINAW132Interface::~NINAW132Interface()
@@ -158,84 +85,10 @@ NINAW132Interface::~NINAW132Interface()
         _global_event_queue->cancel(_connect_event_id);
     }
     _cmutex.unlock();
-
-    // Power down the modem
-    _rst_pin.rst_assert();
-    // Power off the modem
-    _pwr_pin.power_off();
 }
 
-#if MBED_CONF_NINA_W132_PROVIDE_DEFAULT
-
-WiFiInterface *WiFiInterface::get_default_instance()
-{
-    static NINAW132Interface nina_w132;
-    return &nina_w132;
-}
-
-#endif
-
-NINAW132Interface::ResetPin::ResetPin(PinName rst_pin) : _rst_pin(mbed::DigitalOut(rst_pin, 1))
-{
-}
-
-void NINAW132Interface::ResetPin::rst_assert()
-{
-    if (_rst_pin.is_connected()) {
-        _rst_pin = 0;
-        tr_debug("rst_assert(): HW reset asserted.");
-    }
-}
-
-void NINAW132Interface::ResetPin::rst_deassert()
-{
-    if (_rst_pin.is_connected()) {
-        // Notice that Pin7 CH_EN cannot be left floating if used as reset
-        _rst_pin = 1;
-        tr_debug("rst_deassert(): HW reset deasserted.");
-    }
-}
-
-bool NINAW132Interface::ResetPin::is_connected()
-{
-    return _rst_pin.is_connected();
-}
-
-NINAW132Interface::PowerPin::PowerPin(PinName pwr_pin) : _pwr_pin(mbed::DigitalOut(pwr_pin, !MBED_CONF_NINA_W132_POWER_ON_POLARITY))
-{
-}
-
-void NINAW132Interface::PowerPin::power_on()
-{
-    if (_pwr_pin.is_connected()) {
-        _pwr_pin = MBED_CONF_NINA_W132_POWER_ON_POLARITY;
-        debug("power_on(): HW power-on.");
-        ThisThread::sleep_for(milliseconds(MBED_CONF_NINA_W132_POWER_ON_TIME_MS));
-    }
-}
-
-void NINAW132Interface::PowerPin::power_off()
-{
-    if (_pwr_pin.is_connected()) {
-        _pwr_pin = !MBED_CONF_NINA_W132_POWER_ON_POLARITY;
-        debug("power_off(): HW power-off.");
-        ThisThread::sleep_for(milliseconds(MBED_CONF_NINA_W132_POWER_OFF_TIME_MS));
-    }
-}
-
-void NINAW132Interface::_power_off()
-{
-    _rst_pin.rst_assert();
-    _pwr_pin.power_off();
-}
-
-bool NINAW132Interface::PowerPin::is_connected()
-{
-    return _pwr_pin.is_connected();
-}
-
-int NINAW132Interface::connect(const char *ssid, const char *pass, nsapi_security_t security,
-                              uint8_t channel)
+int NINAW132Interface::connect(
+        const char *ssid, const char *pass, nsapi_security_t security, uint8_t channel)
 {
     if (channel != 0) {
         return NSAPI_ERROR_UNSUPPORTED;
@@ -251,23 +104,7 @@ int NINAW132Interface::connect(const char *ssid, const char *pass, nsapi_securit
 
 void NINAW132Interface::_connect_async()
 {
-    // _cmutex.lock();
-    // _ninaw132.uart_enable_input(true);
-    // _ninaw132.authentification_type(_ap_sec);
-    // _ninaw132.dhcp(true, 1);
-    // _ninaw132.connect(ap_ssid, ap_pass);
-    // _cmutex.unlock();
-
-    nsapi_error_t status = _init();
-    if (status != NSAPI_ERROR_OK) {
-        _connect_retval = status;
-        _ninaw132.uart_enable_input(false);
-        _software_conn_stat = IFACE_STATUS_DISCONNECTED;
-        //_conn_stat_cb will be called from refresh_conn_state_cb
-        return;
-    }
-
-    if (_dhcp && !_ninaw132.dhcp(true, 1)) {
+    if (_dhcp && !_ninaw132.dhcp(true)) {
         _connect_retval = NSAPI_ERROR_DHCP_FAILURE;
         _ninaw132.uart_enable_input(false);
         _software_conn_stat = IFACE_STATUS_DISCONNECTED;
@@ -276,7 +113,7 @@ void NINAW132Interface::_connect_async()
     }
     _cmutex.lock();
     if (!_connect_event_id) {
-        tr_debug("_connect_async(): Cancelled.");
+        debug_if(_ninaw132_interface_debug, "_connect_async(): Cancelled.");
         _cmutex.unlock();
         return;
     }
@@ -285,11 +122,9 @@ void NINAW132Interface::_connect_async()
         _ninaw132.authentification_type(_ap_sec);
     }
 
-
-    _connect_retval = _ninaw132.connect(ap_ssid, ap_pass);
+    _connect_retval = _ninaw132.connect(ap_ssid, ap_pass, _ap_sec);
     auto timepassed = _conn_timer.elapsed_time();
-    if (_connect_retval == NSAPI_ERROR_OK
-            || _connect_retval == NSAPI_ERROR_AUTH_FAILURE
+    if (_connect_retval == NSAPI_ERROR_OK || _connect_retval == NSAPI_ERROR_AUTH_FAILURE
             || _connect_retval == NSAPI_ERROR_NO_SSID
             || ((_if_blocking == true) && (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT))) {
         _connect_event_id = 0;
@@ -307,10 +142,11 @@ void NINAW132Interface::_connect_async()
     } else {
         // Postpone to give other stuff time to run
         _connect_event_id = _global_event_queue->call_in(NINAW132_INTERFACE_CONNECT_INTERVAL,
-                                                         callback(this, &NINAW132Interface::_connect_async));
+                callback(this, &NINAW132Interface::_connect_async));
         if (!_connect_event_id) {
-            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
-                       "NINAW132Interface::_connect_async(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
+                    "NINAW132Interface::_connect_async(): unable to add event to queue. Increase "
+                    "\"events.shared-eventsize\"\n");
         }
     }
     _cmutex.unlock();
@@ -358,11 +194,12 @@ int NINAW132Interface::connect()
     _conn_timer.stop();
     _conn_timer.reset();
     _conn_timer.start();
-    _connect_event_id = _global_event_queue->call(callback(this, &NINAW132Interface::_connect_async));
+    _connect_event_id
+            = _global_event_queue->call(callback(this, &NINAW132Interface::_connect_async));
 
     if (!_connect_event_id) {
-        MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
-                   "connect(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+        MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
+                "connect(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
     }
 
 #if MBED_CONF_RTOS_PRESENT
@@ -381,7 +218,8 @@ int NINAW132Interface::connect()
     }
 }
 
-int NINAW132Interface::set_credentials(const char *ssid, const char *pass, nsapi_security_t security)
+int NINAW132Interface::set_credentials(
+        const char *ssid, const char *pass, nsapi_security_t security)
 {
     nsapi_error_t status = _conn_status_to_error();
     if (_software_conn_stat == IFACE_STATUS_CONNECTING) {
@@ -399,8 +237,7 @@ int NINAW132Interface::set_credentials(const char *ssid, const char *pass, nsapi
 
     int ssid_length = strlen(ssid);
 
-    if (ssid_length > 0
-            && ssid_length <= NINAW132_SSID_MAX_LENGTH) {
+    if (ssid_length > 0 && ssid_length <= NINAW132_SSID_MAX_LENGTH) {
         memset(ap_ssid, 0, sizeof(ap_ssid));
         strncpy(ap_ssid, ssid, NINAW132_SSID_MAX_LENGTH);
     } else {
@@ -433,15 +270,17 @@ int NINAW132Interface::set_channel(uint8_t channel)
     return NSAPI_ERROR_UNSUPPORTED;
 }
 
-nsapi_error_t NINAW132Interface::set_network(const SocketAddress &ip_address, const SocketAddress &netmask, const SocketAddress &gateway)
+nsapi_error_t NINAW132Interface::set_network(
+        const SocketAddress &ip_address, const SocketAddress &netmask, const SocketAddress &gateway)
 {
     nsapi_error_t init_result = _init();
     if (NSAPI_ERROR_OK != init_result) {
         return init_result;
     }
 
-    // netmask and gateway switched on purpose. ESP takes different argument order.
-    if (_ninaw132.set_ip_addr(ip_address.get_ip_address(), gateway.get_ip_address(), netmask.get_ip_address())) {
+    // netmask and gateway
+    if (_ninaw132.set_ip_addr(
+                ip_address.get_ip_address(), gateway.get_ip_address(), netmask.get_ip_address())) {
         _dhcp = false;
         return NSAPI_ERROR_OK;
     } else {
@@ -457,7 +296,7 @@ nsapi_error_t NINAW132Interface::set_dhcp(bool dhcp)
     }
 
     _dhcp = dhcp;
-    if (_ninaw132.dhcp(dhcp, 1)) {
+    if (_ninaw132.dhcp(dhcp)) {
         return NSAPI_ERROR_OK;
     } else {
         return NSAPI_ERROR_DEVICE_ERROR;
@@ -470,7 +309,8 @@ void NINAW132Interface::_disconnect_async()
     _disconnect_retval = _ninaw132.disconnect() ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
     auto timepassed = _conn_timer.elapsed_time();
 
-    if (_disconnect_retval == NSAPI_ERROR_OK || ((_if_blocking == true) && (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT))) {
+    if (_disconnect_retval == NSAPI_ERROR_OK
+            || ((_if_blocking == true) && (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT))) {
 
         if (timepassed >= NINAW132_INTERFACE_CONNECT_TIMEOUT && _connect_retval != NSAPI_ERROR_OK) {
             _disconnect_retval = NSAPI_ERROR_CONNECTION_TIMEOUT;
@@ -484,7 +324,6 @@ void NINAW132Interface::_disconnect_async()
             _connect_retval = NSAPI_ERROR_NO_CONNECTION;
         }
 
-        _power_off();
         _software_conn_stat = IFACE_STATUS_DISCONNECTED;
 #if MBED_CONF_RTOS_PRESENT
         _if_connected.notify_all();
@@ -492,13 +331,12 @@ void NINAW132Interface::_disconnect_async()
 
     } else {
         // Postpone to give other stuff time to run
-        _disconnect_event_id = _global_event_queue->call_in(
-                                   NINAW132_INTERFACE_CONNECT_INTERVAL,
-                                   callback(this, &NINAW132Interface::_disconnect_async));
+        _disconnect_event_id = _global_event_queue->call_in(NINAW132_INTERFACE_CONNECT_INTERVAL,
+                callback(this, &NINAW132Interface::_disconnect_async));
         if (!_disconnect_event_id) {
-            MBED_ERROR(
-                MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
-                "NINAW132Interface::_disconnect_async(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
+                    "NINAW132Interface::_disconnect_async(): unable to add event to queue. "
+                    "Increase \"events.shared-eventsize\"\n");
         }
     }
     _cmutex.unlock();
@@ -541,17 +379,17 @@ int NINAW132Interface::disconnect()
     _conn_timer.reset();
     _conn_timer.start();
 
-    _disconnect_event_id = _global_event_queue->call(
-                               callback(this, &NINAW132Interface::_disconnect_async));
+    _disconnect_event_id
+            = _global_event_queue->call(callback(this, &NINAW132Interface::_disconnect_async));
 
     if (!_disconnect_event_id) {
         MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
-                   "disconnect(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+                "disconnect(): unable to add event to queue. Increase "
+                "\"events.shared-eventsize\"\n");
     }
 
 #if MBED_CONF_RTOS_PRESENT
-    while (_if_blocking
-            && (_conn_status_to_error() != NSAPI_ERROR_NO_CONNECTION)
+    while (_if_blocking && (_conn_status_to_error() != NSAPI_ERROR_NO_CONNECTION)
             && (_disconnect_retval != NSAPI_ERROR_OK)) {
         _if_connected.wait();
     }
@@ -571,7 +409,7 @@ nsapi_error_t NINAW132Interface::get_ip_address(SocketAddress *address)
         _ninaw132.uart_enable_input(true);
     }
 
-    const char *ip_buff = _ninaw132.ip_addr();
+    const char *ip_buff = _ninaw132.getIPAddress();
     if (!ip_buff || strcmp(ip_buff, "0.0.0.0") == 0) {
         ip_buff = NULL;
     }
@@ -590,7 +428,7 @@ const char *NINAW132Interface::get_mac_address()
     if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
         _ninaw132.uart_enable_input(true);
     }
-    const char *ret = _ninaw132.mac_addr();
+    const char *ret = _ninaw132.getMACAddress();
 
     if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
         _ninaw132.uart_enable_input(false);
@@ -607,7 +445,7 @@ nsapi_error_t NINAW132Interface::get_gateway(SocketAddress *address)
         return NSAPI_ERROR_NO_CONNECTION;
     }
 
-    if (!address->set_ip_address(_ninaw132.gateway())) {
+    if (!address->set_ip_address(_ninaw132.getGateway())) {
         return NSAPI_ERROR_NO_ADDRESS;
     }
 
@@ -616,7 +454,7 @@ nsapi_error_t NINAW132Interface::get_gateway(SocketAddress *address)
 
 const char *NINAW132Interface::get_gateway()
 {
-    return _conn_stat != NSAPI_STATUS_DISCONNECTED ? _ninaw132.gateway() : NULL;
+    return _conn_stat != NSAPI_STATUS_DISCONNECTED ? _ninaw132.getGateway() : NULL;
 }
 
 nsapi_error_t NINAW132Interface::get_netmask(SocketAddress *address)
@@ -628,7 +466,7 @@ nsapi_error_t NINAW132Interface::get_netmask(SocketAddress *address)
         return NSAPI_ERROR_NO_CONNECTION;
     }
 
-    if (!address->set_ip_address(_ninaw132.netmask())) {
+    if (!address->set_ip_address(_ninaw132.getNetmask())) {
         return NSAPI_ERROR_NO_ADDRESS;
     }
 
@@ -637,13 +475,7 @@ nsapi_error_t NINAW132Interface::get_netmask(SocketAddress *address)
 
 const char *NINAW132Interface::get_netmask()
 {
-    return _conn_stat != NSAPI_STATUS_DISCONNECTED ? _ninaw132.netmask() : NULL;
-}
-
-nsapi_error_t NINAW132Interface::get_time(std::tm *t)
-{
-    _init();
-    return _ninaw132.get_sntp_time(t) ? NSAPI_ERROR_OK : NSAPI_ERROR_TIMEOUT;
+    return _conn_stat != NSAPI_STATUS_DISCONNECTED ? _ninaw132.getNetmask() : NULL;
 }
 
 char *NINAW132Interface::get_interface_name(char *interface_name)
@@ -663,37 +495,17 @@ int8_t NINAW132Interface::get_rssi()
         return 0;
     }
 
-    return _ninaw132.rssi();
+    return _ninaw132.getRSSI();
 }
 
 int NINAW132Interface::scan(WiFiAccessPoint *res, unsigned count)
 {
-    return scan(res, count, SCANMODE_ACTIVE);
-}
-
-int NINAW132Interface::scan(WiFiAccessPoint *res, unsigned count, scan_mode mode, mbed::chrono::milliseconds_u32 t_max, mbed::chrono::milliseconds_u32 t_min)
-{
-    if (t_max > NINA_W132_SCAN_TIME_MAX) {
-        return NSAPI_ERROR_PARAMETER;
-    }
-    if (mode == SCANMODE_ACTIVE && t_min > t_max) {
-        return NSAPI_ERROR_PARAMETER;
-    }
 
     if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
         _ninaw132.uart_enable_input(true);
     }
 
-    nsapi_error_t status = _init();
-    if (status != NSAPI_ERROR_OK) {
-        if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
-            _ninaw132.uart_enable_input(false);
-        }
-        return status;
-    }
-
-    int ret = _ninaw132.scan(res, count, ((int)mode == SCANMODE_ACTIVE ? NINAW132::SCANMODE_ACTIVE : NINAW132::SCANMODE_PASSIVE),
-                        t_max, t_min);
+    int ret = _ninaw132.scan(res, count);
 
     if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
         _ninaw132.uart_enable_input(false);
@@ -703,7 +515,10 @@ int NINAW132Interface::scan(WiFiAccessPoint *res, unsigned count, scan_mode mode
 }
 
 #if MBED_CONF_NINAW132_BUILT_IN_DNS
-nsapi_error_t NINAW132Interface::gethostbyname(const char *name, SocketAddress *address, nsapi_version_t version, const char *interface_name)
+nsapi_error_t NINAW132Interface::gethostbyname(const char *name,
+        SocketAddress *address,
+        nsapi_version_t version,
+        const char *interface_name)
 {
     char ip[NSAPI_IPv4_SIZE];
     memset(ip, 0, NSAPI_IPv4_SIZE);
@@ -717,21 +532,27 @@ nsapi_error_t NINAW132Interface::gethostbyname(const char *name, SocketAddress *
     return NSAPI_ERROR_OK;
 }
 
-
-nsapi_error_t NINAW132Interface::add_dns_server(const SocketAddress &address, const char *interface_name)
+nsapi_error_t NINAW132Interface::add_dns_server(
+        const SocketAddress &address, const char *interface_name)
 {
     return NSAPI_ERROR_OK;
 }
 #endif
 
-bool NINAW132Interface::_get_firmware_ok()
+bool NINAW132Interface::_get_firmware_version()
 {
-    NINAW132::fw_at_version at_v = _ninaw132.at_version();
-    debug("NINAW132: Firmware v%d.%d.%d\r\n", at_v.major, at_v.minor, at_v.patch);
+    NINAW132::fw_at_version at_v = _ninaw132.get_firmware_version();
+    debug_if(_ninaw132_interface_debug,
+            "NINAW132: Firmware v%d.%d.%d\r\n",
+            at_v.major,
+            at_v.minor,
+            at_v.patch);
     // if (at_v.major < NINA_W132_AT_VERSION_MAJOR) {
-    //     debug("NINAW132: ERROR: AT Firmware v%d incompatible with this driver.", at_v.major);
-    //     debug("Update at least to v%d - https://developer.mbed.org/teams/NINAW132/wiki/Firmware-Update\n", NINA_W132_AT_VERSION_MAJOR);
-    //     MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_UNSUPPORTED), "Too old AT firmware");
+    //     debug_if(_ninaw132_interface_debug, "NINAW132: ERROR: AT Firmware v%d incompatible with
+    //     this driver.", at_v.major); debug_if(_ninaw132_interface_debug, "Update at least to v%d -
+    //     https://developer.mbed.org/teams/NINAW132/wiki/Firmware-Update\n",
+    //     NINA_W132_AT_VERSION_MAJOR); MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER,
+    //     MBED_ERROR_UNSUPPORTED), "Too old AT firmware");
     // }
 
     return true;
@@ -742,43 +563,17 @@ nsapi_error_t NINAW132Interface::_init(void)
     if (!_initialized) {
         // check the presence of module
         if (!_ninaw132.at_available()) {
-            // if (_pwr_pin.is_connected()) {
-                _pwr_pin.power_off();
-                _pwr_pin.power_on();
-                /* Align board's serial flow control with NINAW132's, resetting to disabled on re-power or reset */
-                if (!_ninaw132.stop_uart_hw_flow_ctrl(true)) {
-                    return NSAPI_ERROR_DEVICE_ERROR;
-                }
-
-                if (_reset() != NSAPI_ERROR_OK) {
-                    return NSAPI_ERROR_DEVICE_ERROR;
-                }
-            // }
+            return NSAPI_ERROR_DEVICE_ERROR;
         }
         if (!_ninaw132.echo_off()) {
             return NSAPI_ERROR_DEVICE_ERROR;
         }
-        if (!_get_firmware_ok()) {
+        if (!_get_firmware_version()) {
             return NSAPI_ERROR_DEVICE_ERROR;
         }
-        // if (!_ninaw132.set_default_wifi_mode(NINAW132::WIFIMODE_STATION)) {
-        //     return NSAPI_ERROR_DEVICE_ERROR;
-        // }
-        // if (!_ninaw132.set_country_code_policy(true, _ch_info.country_code, _ch_info.channel_start, _ch_info.channels)) {
-        //     return NSAPI_ERROR_DEVICE_ERROR;
-        // }
-        if (!_ninaw132.startup(NINAW132::WIFIMODE_STATION)) {
-            return NSAPI_ERROR_DEVICE_ERROR;
-        }
-#if MBED_CONF_NINAW132_SNTP_ENABLE
-        if (!_ninaw132.set_sntp_config(MBED_CONF_NINAW132_SNTP_ENABLE,
-                                  MBED_CONF_NINAW132_SNTP_TIMEZONE,
-                                  MBED_CONF_NINAW132_SNTP_SERVER0,
-                                  MBED_CONF_NINAW132_SNTP_SERVER1,
-                                  MBED_CONF_NINAW132_SNTP_SERVER2)) {
-            return NSAPI_ERROR_DEVICE_ERROR;
-        }
-#endif
+        // TODO: set wifi default mode
+        // 
+
         _initialized = true;
     }
     return NSAPI_ERROR_OK;
@@ -786,34 +581,8 @@ nsapi_error_t NINAW132Interface::_init(void)
 
 nsapi_error_t NINAW132Interface::_reset()
 {
-    if (_rst_pin.is_connected()) {
-        _rst_pin.rst_assert();
-        // If you happen to use Pin7 CH_EN as reset pin, not needed otherwise
-        // https://www.espressif.com/sites/default/files/documentation/NINAW132_hardware_design_guidelines_en.pdf
-        // First need to round up when converting to kernel ticks (eg 200us -> 1ms).
-        auto delay = duration_cast<Kernel::Clock::duration_u32>(200us);
-        if (delay < 200us) {
-            delay++;
-        }
-        // Then need to round the clock-resolution duration up; if we were at the end of a tick
-        // period, it might flip immediately.
-        delay++;
-        ThisThread::sleep_for(delay);
-        _ninaw132.flush();
-        _rst_pin.rst_deassert();
-        /* Align board's serial flow control with NINAW132's, resetting to disabled on re-power or reset */
-        if (!_ninaw132.stop_uart_hw_flow_ctrl(true)) {
-            return NSAPI_ERROR_DEVICE_ERROR;
-        }
-    } else {
-        _ninaw132.flush();
-        if (!_ninaw132.at_available()) {
-            return NSAPI_ERROR_DEVICE_ERROR;
-        }
-        if (!_ninaw132.reset()) {
-            return NSAPI_ERROR_DEVICE_ERROR;
-        }
-    }
+   _ninaw132.hardware_reset();
+   _ninaw132.uart_enable_input(true);
 
     return _ninaw132.at_available() ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
@@ -892,7 +661,8 @@ int NINAW132Interface::socket_bind(void *handle, const SocketAddress &address)
         }
 
         for (int id = 0; id < NINAW132_SOCKET_COUNT; id++) {
-            if (_sock_i[id].sport == address.get_port() && id != socket->id) { // Port already reserved by another socket
+            if (_sock_i[id].sport == address.get_port()
+                    && id != socket->id) { // Port already reserved by another socket
                 return NSAPI_ERROR_PARAMETER;
             } else if (id == socket->id && (socket->connected || socket->bound)) {
                 return NSAPI_ERROR_PARAMETER;
@@ -900,11 +670,13 @@ int NINAW132Interface::socket_bind(void *handle, const SocketAddress &address)
         }
         _sock_i[socket->id].sport = address.get_port();
 
-        int ret = _ninaw132.open_udp(socket->id, LOCAL_ADDR, address.get_port(), _sock_i[socket->id].sport, 2);
+        // UNSUPPORTED
+        // int ret = _ninaw132.open_udp(
+        //         socket->id, LOCAL_ADDR, address.get_port(), _sock_i[socket->id].sport, 2);
 
-        socket->bound = (ret == NSAPI_ERROR_OK) ? true : false;
+        // socket->bound = (ret == NSAPI_ERROR_OK) ? true : false;
 
-        return ret;
+        // return ret;
     }
 
     return NSAPI_ERROR_UNSUPPORTED;
@@ -925,9 +697,13 @@ int NINAW132Interface::socket_connect(void *handle, const SocketAddress &addr)
     }
 
     if (socket->proto == NSAPI_UDP) {
-        ret = _ninaw132.open_udp(socket->id, addr.get_ip_address(), addr.get_port(), _sock_i[socket->id].sport, 0);
+        return NSAPI_ERROR_UNSUPPORTED;
+        // ret = _ninaw132.open_udp(
+        //         socket->id, addr.get_ip_address(), addr.get_port(), _sock_i[socket->id].sport,
+        //         0);
     } else {
-        ret = _ninaw132.open_tcp(socket->id, addr.get_ip_address(), addr.get_port(), socket->keepalive);
+        ret = _ninaw132.open_tcp(
+                socket->id, addr.get_ip_address(), addr.get_port(), socket->keepalive);
     }
 
     socket->connected = (ret == NSAPI_ERROR_OK) ? true : false;
@@ -961,13 +737,14 @@ int NINAW132Interface::socket_send(void *handle, const void *data, unsigned size
 
     status = _ninaw132.send(socket->id, data, size);
 
-    if (status == NSAPI_ERROR_WOULD_BLOCK
-            && socket->proto == NSAPI_TCP
+    if (status == NSAPI_ERROR_WOULD_BLOCK && socket->proto == NSAPI_TCP
             && core_util_atomic_cas_u8(&_cbs[socket->id].deferred, &expect_false, true)) {
-        tr_debug("socket_send(...): Postponing SIGIO from the device.");
-        if (!_global_event_queue->call_in(50ms, callback(this, &NINAW132Interface::event_deferred))) {
-            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
-                       "socket_send(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+        debug_if(_ninaw132_interface_debug, "socket_send(...): Postponing SIGIO from the device.");
+        if (!_global_event_queue->call_in(
+                    50ms, callback(this, &NINAW132Interface::event_deferred))) {
+            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
+                    "socket_send(): unable to add event to queue. Increase "
+                    "\"events.shared-eventsize\"\n");
         }
 
     } else if (status == NSAPI_ERROR_WOULD_BLOCK && socket->proto == NSAPI_UDP) {
@@ -996,13 +773,14 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
             socket->connected = false;
         }
     } else {
-        recv = _ninaw132.recv_udp(socket, data, size);
+        // Unsupported
     }
 
     return recv;
 }
 
-int NINAW132Interface::socket_sendto(void *handle, const SocketAddress &addr, const void *data, unsigned size)
+int NINAW132Interface::socket_sendto(
+        void *handle, const SocketAddress &addr, const void *data, unsigned size)
 {
     struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
 
@@ -1010,7 +788,7 @@ int NINAW132Interface::socket_sendto(void *handle, const SocketAddress &addr, co
         return NSAPI_ERROR_NO_SOCKET;
     }
 
-    if ((strcmp(addr.get_ip_address(), "0.0.0.0") == 0) || !addr.get_port())  {
+    if ((strcmp(addr.get_ip_address(), "0.0.0.0") == 0) || !addr.get_port()) {
         return NSAPI_ERROR_DNS_FAILURE;
     }
 
@@ -1059,8 +837,8 @@ void NINAW132Interface::socket_attach(void *handle, void (*callback)(void *), vo
     _cbs[socket->id].data = data;
 }
 
-nsapi_error_t NINAW132Interface::setsockopt(nsapi_socket_t handle, int level,
-                                           int optname, const void *optval, unsigned optlen)
+nsapi_error_t NINAW132Interface::setsockopt(
+        nsapi_socket_t handle, int level, int optname, const void *optval, unsigned optlen)
 {
     struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
 
@@ -1073,13 +851,14 @@ nsapi_error_t NINAW132Interface::setsockopt(nsapi_socket_t handle, int level,
     if (level == NSAPI_SOCKET && socket->proto == NSAPI_TCP) {
         switch (optname) {
             case NSAPI_KEEPALIVE: {
-                if (socket->connected) { // NINAW132 limitation, keepalive needs to be given before connecting
+                if (socket->connected) { // NINAW132 limitation, keepalive needs to be given before
+                                         // connecting
                     return NSAPI_ERROR_UNSUPPORTED;
                 }
 
                 if (optlen == sizeof(int)) {
                     int secs = *(int *)optval;
-                    if (secs  >= 0 && secs <= 7200) {
+                    if (secs >= 0 && secs <= 7200) {
                         socket->keepalive = secs;
                         return NSAPI_ERROR_OK;
                     }
@@ -1092,7 +871,8 @@ nsapi_error_t NINAW132Interface::setsockopt(nsapi_socket_t handle, int level,
     return NSAPI_ERROR_UNSUPPORTED;
 }
 
-nsapi_error_t NINAW132Interface::getsockopt(nsapi_socket_t handle, int level, int optname, void *optval, unsigned *optlen)
+nsapi_error_t NINAW132Interface::getsockopt(
+        nsapi_socket_t handle, int level, int optname, void *optval, unsigned *optlen)
 {
     struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
 
@@ -1117,15 +897,16 @@ nsapi_error_t NINAW132Interface::getsockopt(nsapi_socket_t handle, int level, in
     return NSAPI_ERROR_UNSUPPORTED;
 }
 
-
 void NINAW132Interface::event()
 {
     if (!_oob_event_id) {
         // Throttles event creation by using arbitrary small delay
-        _oob_event_id = _global_event_queue->call_in(50ms, callback(this, &NINAW132Interface::proc_oob_evnt));
+        _oob_event_id = _global_event_queue->call_in(
+                50ms, callback(this, &NINAW132Interface::proc_oob_evnt));
         if (!_oob_event_id) {
-            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM), \
-                       "NINAW132Interface::event(): unable to add event to queue. Increase \"events.shared-eventsize\"\n");
+            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
+                    "NINAW132Interface::event(): unable to add event to queue. Increase "
+                    "\"events.shared-eventsize\"\n");
         }
     }
 
@@ -1155,16 +936,6 @@ nsapi_connection_status_t NINAW132Interface::get_connection_status() const
 {
     return _conn_stat;
 }
-
-#if MBED_CONF_NINAW132_PROVIDE_DEFAULT
-
-WiFiInterface *WiFiInterface::get_default_instance()
-{
-    static NINAW132Interface ninaw132;
-    return &ninaw132;
-}
-
-#endif
 
 void NINAW132Interface::refresh_conn_state_cb()
 {
@@ -1201,12 +972,13 @@ void NINAW132Interface::refresh_conn_state_cb()
         return;
     }
 
-    debug("refresh_conn_state_cb(): Changed to %d.", _conn_stat);
+    debug_if(_ninaw132_interface_debug, "refresh_conn_state_cb(): Changed to %d.", _conn_stat);
 
     if (_conn_stat_cb) {
-        // _conn_stat_cb will be called in _connect_async or disconnect_assync to avoid race condition
+        // _conn_stat_cb will be called in _connect_async or disconnect_assync to avoid race
+        // condition
         if ((_software_conn_stat == IFACE_STATUS_CONNECTING
-                || _software_conn_stat == IFACE_STATUS_DISCONNECTING)
+                    || _software_conn_stat == IFACE_STATUS_DISCONNECTING)
                 && (_conn_stat != NSAPI_STATUS_CONNECTING)) {
             return;
         }
@@ -1249,26 +1021,14 @@ nsapi_error_t NINAW132Interface::set_blocking(bool blocking)
     return NSAPI_ERROR_OK;
 }
 
-nsapi_error_t NINAW132Interface::set_country_code(bool track_ap, const char *country_code, int len, int channel_start, int channels)
+#if MBED_CONF_NINA_W132_PROVIDE_DEFAULT
+
+WiFiInterface *WiFiInterface::get_default_instance()
 {
-    for (int i = 0; i < len; i++) {
-        // Validation done by firmware
-        if (!country_code[i]) {
-            tr_warning("set_country_code(): Invalid country code.");
-            return NSAPI_ERROR_PARAMETER;
-        }
-    }
-
-    _ch_info.track_ap = track_ap;
-
-    // Firmware takes only first three characters
-    strncpy(_ch_info.country_code, country_code, sizeof(_ch_info.country_code));
-    _ch_info.country_code[sizeof(_ch_info.country_code) - 1] = '\0';
-
-    _ch_info.channel_start = channel_start;
-    _ch_info.channels = channels;
-
-    return NSAPI_ERROR_OK;
+    static NINAW132Interface ninaw132;
+    return &ninaw132;
 }
+
+#endif
 
 // #endif
