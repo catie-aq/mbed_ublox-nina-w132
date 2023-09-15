@@ -18,23 +18,13 @@
 #ifndef NINA_W132_H
 #define NINA_W132_H
 
-// #if DEVICE_SERIAL && DEVICE_INTERRUPTIN && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_API_PRESENT)
-#include <stdint.h>
+// #if DEVICE_SERIAL && DEVICE_INTERRUPTIN && defined(MBED_CONF_EVENTS_PRESENT) &&
+// defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_API_PRESENT)
 #include <ctime>
+#include <stdint.h>
 
 #include "mbed.h"
-
-#include "drivers/BufferedSerial.h"
-#include "netsocket/nsapi_types.h"
-#include "netsocket/WiFiAccessPoint.h"
-#include "PinNames.h"
-#include "platform/ATCmdParser.h"
-#include "platform/Callback.h"
 #include "platform/mbed_chrono.h"
-#include "platform/mbed_error.h"
-#include "rtos/Mutex.h"
-#include "rtos/ThisThread.h"
-#include "netsocket/SocketAddress.h"
 
 // Various timeouts for different NINA_W132 operations
 // (some of these can't use literal form as they're needed for defaults in this header, where
@@ -43,34 +33,19 @@
 #define NINA_W132_CONNECT_TIMEOUT 15s
 #endif
 #ifndef NINA_W132_SEND_TIMEOUT
-#define NINA_W132_SEND_TIMEOUT    2s
+#define NINA_W132_SEND_TIMEOUT 2s
 #endif
 #ifndef NINA_W132_RECV_TIMEOUT
-#define NINA_W132_RECV_TIMEOUT    std::chrono::seconds(2)
+#define NINA_W132_RECV_TIMEOUT std::chrono::seconds(2)
 #endif
 #ifndef NINA_W132_MISC_TIMEOUT
-#define NINA_W132_MISC_TIMEOUT    std::chrono::seconds(2)
+#define NINA_W132_MISC_TIMEOUT std::chrono::seconds(2)
 #endif
 #ifndef NINA_W132_DNS_TIMEOUT
-#define NINA_W132_DNS_TIMEOUT     15s
+#define NINA_W132_DNS_TIMEOUT 15s
 #endif
 
-#define NINA_W132_SCAN_TIME_MIN 0ms
-#define NINA_W132_SCAN_TIME_MAX 1500ms
-#define NINA_W132_SCAN_TIME_MIN_DEFAULT 120ms
-#define NINA_W132_SCAN_TIME_MAX_DEFAULT 360ms
-
-// Firmware version
-#define NINA_W132_SDK_VERSION 2000000
-#define NINA_W132_SDK_VERSION_MAJOR NINA_W132_SDK_VERSION/1000000
-
-#define NINA_W132_AT_VERSION 1000000
-#define NINA_W132_AT_VERSION_MAJOR NINA_W132_AT_VERSION/1000000
-#define NINA_W132_AT_VERSION_TCP_PASSIVE_MODE 1070000
-#define NINA_W132_AT_VERSION_WIFI_SCAN_CHANGE 1060000
-
-#define FW_AT_LEAST_VERSION(MAJOR,MINOR,PATCH,NUSED/*Not used*/,REF) \
-    (((MAJOR)*1000000+(MINOR)*10000+(PATCH)*100) >= REF ? true : false)
+#define NINA_W132_SCAN_TIME_MAX_DEFAULT std::chrono::seconds(2)
 
 struct nina_w132_socket {
     int id;
@@ -86,27 +61,42 @@ struct nina_w132_socket {
  */
 class NINAW132 {
 public:
-    NINAW132(PinName tx, PinName rx, bool debug = false, PinName rts = NC, PinName cts = NC);
+    static const int8_t WIFI_MODE_STATION = 1;
+    static const int8_t WIFI_MODE_ACCESS_POINT = 2;
+
+    enum disconnection_reason {
+        UNKNOWN = 0,
+        REMOTE_CLOSE = 1,
+        OUT_OF_RANGE = 2,
+        ROAMING = 3,
+        SECURITY_PROBLEM = 4,
+        NETWORK_DISABLE = 5
+    };
+
+    NINAW132(PinName tx, PinName rx, PinName resetpin = NC, bool debug = false);
 
     /**
-    * NINAW132 firmware AT version
-    *
-    * @param major Major version number
-    * @param minor Minor version number
-    * @param patch Patch version number
-    */
+     * NINAW132 firmware AT version
+     *
+     * @param major Major version number
+     * @param minor Minor version number
+     * @param patch Patch version number
+     */
     struct fw_at_version {
         int major;
         int minor;
         int patch;
-        fw_at_version(int major, int minor, int patch) : major(major), minor(minor), patch(patch) {}
+
+        fw_at_version(int major, int minor, int patch): major(major), minor(minor), patch(patch)
+        {
+        }
     };
 
     /**
-    * Check AT command interface of NINAW132
-    *
-    * @return true if ready to respond on AT commands
-    */
+     * Check AT command interface of NINAW132
+     *
+     * @return true if ready to respond on AT commands
+     */
     bool at_available(void);
 
     /**
@@ -117,74 +107,67 @@ public:
     bool echo_off(void);
 
     /**
-    * Check AT instruction set version from which firmware is created
-    *
-    * @return fw_at_version which tells major, minor and patch version
-    */
-    struct fw_at_version at_version(void);
+     * Check AT instruction set version from which firmware is created
+     *
+     * @return fw_at_version which tells major, minor and patch version
+     */
+    struct fw_at_version get_firmware_version(void);
 
     /**
-    * Startup the NINAW132
-    *
-    * @param mode mode of WIFI 1-client, 2-host, 3-both
-    * @return true only if NINAW132 was setup correctly
-    */
+     * Startup the NINAW132
+     *
+     * @param mode mode of WIFI 1-client, 2-host, 3-both
+     * @return true only if NINAW132 was setup correctly
+     */
     bool startup(int mode);
 
     /**
-    * Reset NINAW132
-    *
-    * @return true only if NINAW132 resets successfully
-    */
-    bool reset(void);
+     * Hardware reset NINAW132
+     *
+     * @return true only if NINAW132 resets successfully
+     */
+    void hardware_reset(void);
 
     /**
-    * Enable/Disable DHCP
-    *
-    * @param enabled DHCP enabled when true
-    * @param mode mode of DHCP 0-softAP, 1-station, 2-both
-    * @return true only if NINAW132 enables/disables DHCP successfully
-    */
-    bool dhcp(bool enabled, int mode);
+     * Software reset NINAW132
+     *
+     * @return true only if NINAW132 resets successfully
+     */
+    bool software_reset(void);
 
     /**
-    * authentification type NINAW132 to AP
-    *
-    * @param security the security type
-    * @return true in success, false in failure
-    */
+     * Enable/Disable DHCP
+     *
+     * @param enabled DHCP enabled when true
+     * @param mode mode of DHCP 0-softAP, 1-station, 2-both
+     * @return true only if NINAW132 enables/disables DHCP successfully
+     */
+    bool dhcp(bool enabled);
+
+    /**
+     * authentification type NINAW132 to AP
+     *
+     * @param security the security type
+     * @return true in success, false in failure
+     */
     bool authentification_type(nsapi_security_t security);
 
     /**
-    * Connect NINAW132 to AP
-    *
-    * @param ap the name of the AP
-    * @param passPhrase the password of AP
-    * @return NSAPI_ERROR_OK in success, negative error code in failure
-    */
-    nsapi_error_t connect(const char *ap, const char *passPhrase);
+     * Connect NINAW132 to AP
+     *
+     * @param ap the name of the AP
+     * @param passPhrase the password of AP
+     * @param ap_sec the security level of network AP
+     * @return nsapi_error enum
+     */
+    int connect(const char *ap, const char *passPhrase, nsapi_security_t ap_sec);
 
     /**
-    * Disconnect NINAW132 from AP
-    *
-    * @return true only if NINAW132 is disconnected successfully
-    */
+     * Disconnect NINAW132 from AP
+     *
+     * @return true only if NINAW132 is disconnected successfully
+     */
     bool disconnect(void);
-
-    /**
-    * Enable or disable Remote IP and Port printing with +IPD
-    *
-    * @param enable, 1 on, 0 off
-    * @return true only if NINAW132 is disconnected successfully
-    */
-    bool ip_info_print(int enable);
-
-    /**
-    * Get the IP address of NINAW132
-    *
-    * @return null-teriminated IP address or null if no IP address is assigned
-    */
-    const char *ip_addr(void);
 
     /**
      * Set static IP address, gateway and netmask
@@ -198,256 +181,160 @@ public:
     bool set_ip_addr(const char *ip, const char *gateway, const char *netmask);
 
     /**
-    * Get the MAC address of NINAW132
-    *
-    * @return null-terminated MAC address or null if no MAC address is assigned
-    */
-    const char *mac_addr(void);
+     * Get the IP address of NINAW132
+     *
+     * @return null-teriminated IP address or null if no IP address is assigned
+     */
+    const char *getIPAddress(void);
+
+    /**
+     * Get the MAC address of NINAW132
+     *
+     * @return null-terminated MAC address or null if no MAC address is assigned
+     */
+    const char *getMACAddress(void);
 
     /** Get the local gateway
-    *
-    *  @return         Null-terminated representation of the local gateway
-    *                  or null if no network mask has been recieved
-    */
-    const char *gateway();
+     *
+     *  @return         Null-terminated representation of the local gateway
+     *                  or null if no network mask has been recieved
+     */
+    const char *getGateway();
 
     /** Get the local network mask
      *
      *  @return         Null-terminated representation of the local network mask
      *                  or null if no network mask has been recieved
      */
-    const char *netmask();
+    const char *getNetmask();
 
     /* Return RSSI for active connection
      *
      * @return      Measured RSSI
      */
-    int8_t rssi();
+    int8_t getRSSI();
 
-    /** Scan mode
+    /**
+     * Check if NINAW132 is conenected
+     *
+     * @return true only if the chip has an IP address
      */
-    enum scan_mode {
-        SCANMODE_ACTIVE = 0, /*!< active mode */
-        SCANMODE_PASSIVE = 1 /*!< passive mode */
-    };
+    bool isConnected(void);
 
     /** Scan for available networks
      *
      * @param  ap    Pointer to allocated array to store discovered AP
      * @param  limit Size of allocated @a res array, or 0 to only count available AP
-     * @param  t_max Maximum scan time per channel
-     * @param  t_min Minimum scan time per channel in active mode, can be omitted in passive mode
-     * @return       Number of entries in @a res, or if @a count was 0 number of available networks, negative on error
-     *               see @a nsapi_error
+     * @return       Number of entries in @a res, or if @a count was 0 number of available networks,
+     * negative on error see @a nsapi_error
      */
-    int scan(WiFiAccessPoint *res, unsigned limit, scan_mode mode,
-             std::chrono::duration<unsigned, std::milli> t_max,
-             std::chrono::duration<unsigned, std::milli> t_min);
+    int scan(WiFiAccessPoint *res, unsigned limit);
 
     /**Perform a dns query
-    *
-    * @param name Hostname to resolve
-    * @param ip   Buffer to store IP address
-    * @return 0 true on success, false on failure
-    */
+     *
+     * @param name Hostname to resolve
+     * @param ip   Buffer to store IP address
+     * @return 0 true on success, false on failure
+     */
     bool dns_lookup(const char *name, char *ip);
 
     /**
-    * Open a socketed connection
-    *
-    * @param type the type of socket to open "UDP" or "TCP"
-    * @param id id to give the new socket, valid 0-4
-    * @param port port to open connection with
-    * @param addr the IP address of the destination
-    * @param port the port on the destination
-    * @param local_port UDP socket's local port, zero means any
-    * @param udp_mode UDP socket's mode, zero means can't change remote, 1 can change once, 2 can change multiple times
-    * @return NSAPI_ERROR_OK in success, negative error code in failure
-    */
-    nsapi_error_t open_udp(int id, const char *addr, int port, int local_port = 0, int udp_mode = 0);
-
-    /**
-    * Open a socketed connection
-    *
-    * @param type the type of socket to open "UDP" or "TCP"
-    * @param id id to give the new socket, valid 0-4
-    * @param port port to open connection with
-    * @param addr the IP address of the destination
-    * @param port the port on the destination
-    * @param tcp_keepalive TCP connection's keep alive time, zero means disabled
-    * @return NSAPI_ERROR_OK in success, negative error code in failure
-    */
+     * Open a socketed connection
+     *
+     * @param type the type of socket to open "UDP" or "TCP"
+     * @param id id to give the new socket, valid 0-4
+     * @param port port to open connection with
+     * @param addr the IP address of the destination
+     * @param port the port on the destination
+     * @param tcp_keepalive TCP connection's keep alive time, zero means disabled
+     * @return NSAPI_ERROR_OK in success, negative error code in failure
+     */
     nsapi_error_t open_tcp(int id, const char *addr, int port, int keepalive = 0);
 
     /**
-    * Sends data to an open socket
-    *
-    * @param id id of socket to send to
-    * @param data data to be sent
-    * @param amount amount of data to be sent - max 2048
-    * @return number of bytes on success, negative error code in failure
-    */
+     * Sends data to an open socket
+     *
+     * @param id id of socket to send to
+     * @param data data to be sent
+     * @param amount amount of data to be sent - max 2048
+     * @return number of bytes on success, negative error code in failure
+     */
     nsapi_size_or_error_t send(int id, const void *data, uint32_t amount);
 
     /**
-    * Receives datagram from an open UDP socket
-    *
-    * @param id id to receive from
-    * @param data placeholder for returned information
-    * @param amount number of bytes to be received
-    * @return the number of bytes received
-    */
-    int32_t recv_udp(struct nina_w132_socket *socket, void *data, uint32_t amount, mbed::chrono::milliseconds_u32 timeout = NINA_W132_RECV_TIMEOUT);
+     * Receives stream data from an open TCP socket
+     *
+     * @param id id to receive from
+     * @param data placeholder for returned information
+     * @param amount number of bytes to be received
+     * @return the number of bytes received
+     */
+    int32_t recv_tcp(int id,
+            void *data,
+            uint32_t amount,
+            mbed::chrono::milliseconds_u32 timeout = NINA_W132_RECV_TIMEOUT);
 
     /**
-    * Receives stream data from an open TCP socket
-    *
-    * @param id id to receive from
-    * @param data placeholder for returned information
-    * @param amount number of bytes to be received
-    * @return the number of bytes received
-    */
-    int32_t recv_tcp(int id, void *data, uint32_t amount, mbed::chrono::milliseconds_u32 timeout = NINA_W132_RECV_TIMEOUT);
-
-    /**
-    * Closes a socket
-    *
-    * @param id id of socket to close, valid only 0-4
-    * @return true only if socket is closed successfully
-    */
+     * Closes a socket
+     *
+     * @param id id of socket to close, valid only 0-4
+     * @return true only if socket is closed successfully
+     */
     bool close(int id);
 
     /**
-    * Allows timeout to be changed between commands
-    *
-    * @param timeout_ms timeout of the connection
-    */
+     * Allows timeout to be changed between commands
+     *
+     * @param timeout_ms timeout of the connection
+     */
     void set_timeout(mbed::chrono::milliseconds_u32 timeout = NINA_W132_MISC_TIMEOUT);
 
     /**
-    * Checks if data is available
-    */
+     * Checks if data is available
+     */
     bool readable();
 
     /**
-    * Checks if data can be written
-    */
+     * Checks if data can be written
+     */
     bool writeable();
 
     /**
-    * Attach a function to call whenever sigio happens in the serial
-    *
-    * @param func A pointer to a void function, or 0 to set as none
-    */
+     * Attach a function to call whenever sigio happens in the serial
+     *
+     * @param func A pointer to a void function, or 0 to set as none
+     */
     void sigio(mbed::Callback<void()> func);
 
     /**
-    * Attach a function to call whenever sigio happens in the serial
-    *
-    * @param obj pointer to the object to call the member function on
-    * @param method pointer to the member function to call
-    */
-    template <typename T, typename M>
-    void sigio(T *obj, M method)
+     * Attach a function to call whenever sigio happens in the serial
+     *
+     * @param obj pointer to the object to call the member function on
+     * @param method pointer to the member function to call
+     */
+    template <typename T, typename M> void sigio(T *obj, M method)
     {
         sigio(mbed::Callback<void()>(obj, method));
     }
 
     /**
-    * Attach a function to call whenever network state has changed.
-    *
-    * @param func A pointer to a void function, or 0 to set as none
-    */
+     * Attach a function to call whenever network state has changed.
+     *
+     * @param func A pointer to a void function, or 0 to set as none
+     */
     void attach(mbed::Callback<void()> status_cb);
 
-    /**
-     * Configure SNTP (Simple Network Time Protocol)
-     *
-     * @param enable   true to enable SNTP or false to disable it
-     * @param timezone timezone offset [-11,13] (0 by default)
-     * @param server0  optional parameter indicating the first SNTP server ("cn.ntp.org.cn" by default)
-     * @param server1  optional parameter indicating the second SNTP server ("ntp.sjtu.edu.cn" by default)
-     * @param server2  optional parameter indicating the third SNTP server ("us.pool.ntp.org" by default)
-     *
-     * @retval true if successful, false otherwise
-     */
-    bool set_sntp_config(bool enable, int timezone = 0, const char *server0 = nullptr,
-                         const char *server1 = nullptr, const char *server2 = nullptr);
 
-    /**
-     * Read out the configuration of SNTP (Simple Network Time Protocol)
-     *
-     * @param enable   true if SNTP is enabled
-     * @param timezone timezone offset [-11,13]
-     * @param server0  name of the first SNTP server
-     * @param server1  name of the second SNTP server (optional, nullptr if not set)
-     * @param server2  name of the third SNTP server (optional, nullptr if not set)
-     *
-     * @retval true if successful, false otherwise
-     */
-    bool get_sntp_config(bool *enable, int *timezone, char *server0,
-                         char *server1, char *server2);
-
-    /**
-     * Read out SNTP time from NINAW132.
-     *
-     * @param t std::tm structure to be filled in
-     * @retval true on success, false otherwise
-     *
-     * @note NINAW132 must be connected and needs a couple of seconds
-     * before returning correct time. It may return 1 Jan 1970 if it is not ready.
-     *
-     * @note NINAW132.sntp-enable must be set to true in mbed_app.json file.
-     */
-    bool get_sntp_time(std::tm *t);
-
-    template <typename T, typename M>
-    void attach(T *obj, M method)
+    template <typename T, typename M> void attach(T *obj, M method)
     {
         attach(mbed::Callback<void()>(obj, method));
     }
-
-    /**
-     * Read default Wifi mode from flash
-     *
-     * return Station, SoftAP or SoftAP+Station - 0 on failure
-     */
-    int8_t default_wifi_mode();
-
-    /**
-     * Default Wifi mode written to flash only if changes
-     */
-    bool set_default_wifi_mode(const int8_t mode);
-
-    /**
-     * @param track_ap      if TRUE, sets the county code to be the same as the AP's that ESP is connected to,
-     *                      if FALSE the code will not change
-     * @param country_code  ISO 3166-1 Alpha-2 coded country code
-     * @param channel_start the channel number to start at
-     * @param channels      number of channels
-     */
-    bool set_country_code_policy(bool track_ap, const char *country_code, int channel_start, int channels);
 
     /** Get the connection status
      *
      *  @return         The connection status according to ConnectionStatusType
      */
     nsapi_connection_status_t connection_status() const;
-
-    /**
-     * Start board's and NINAW132's UART flow control
-     *
-     * @return true if started
-     */
-    bool start_uart_hw_flow_ctrl();
-
-    /**
-     * Stop board's and NINAW132's UART flow control
-     *
-     * @param board_only    true to apply to board only, false to apply both
-     * @return true if started
-     */
-    bool stop_uart_hw_flow_ctrl(bool board_only = false);
 
     /**
      * For executing OOB processing on background
@@ -478,32 +365,30 @@ public:
      */
     int uart_enable_input(bool lock);
 
-    enum disconnection_reason {
-        UNKNOWN = 0,
-        REMOTE_CLOSE = 1,
-        OUT_OF_RANGE = 2,
-        ROAMING = 3,
-        SECURITY_PROBLEM = 4,
-        NETWORK_DISABLE = 5
-    };
-
 private:
     // FW version
     struct fw_at_version _at_v;
 
+    // debug 
+    bool _ninaw132_debug;
+
     // FW version specific settings and functionalities
     bool _tcp_passive;
-    int32_t _recv_tcp_passive(int id, void *data, uint32_t amount, std::chrono::duration<uint32_t, std::milli> timeout);
-    mbed::Callback<void()> _callback;
+    int32_t _recv_tcp_passive(int id,
+            void *data,
+            uint32_t amount,
+            std::chrono::duration<uint32_t, std::milli> timeout);
+    Callback<void()> _callback;
 
     // UART settings
-    mbed::BufferedSerial _serial;
-    PinName _serial_rts;
-    PinName _serial_cts;
-    rtos::Mutex _smutex; // Protect serial port access
+    BufferedSerial _serial;
+    Mutex _smutex; // Protect serial port access
 
     // AT Command Parser
-    mbed::ATCmdParser _parser;
+    ATCmdParser _parser;
+
+    // Reset pin
+    DigitalOut _resetpin;
 
     // Wifi scan result handling
     bool _recv_ap(nsapi_wifi_ap_t *ap);
@@ -517,7 +402,8 @@ private:
         uint32_t len; // Remaining length
         uint32_t alloc_len; // Original length
         // data follows
-    } *_packets, * *_packets_end;
+    } * _packets, **_packets_end;
+
     void _clear_socket_packets(int id);
     void _clear_socket_sending(int id);
     int _sock_active_id;
@@ -530,23 +416,9 @@ private:
 
     // OOB message handlers
     void _oob_packet_hdlr();
-    void _oob_connect_err();
-    void _oob_conn_already();
-    void _oob_err();
-    void _oob_socket0_closed();
-    void _oob_socket1_closed();
-    void _oob_socket2_closed();
-    void _oob_socket3_closed();
-    void _oob_socket4_closed();
-    void _oob_connection_status();
-    void _oob_socket_close_err();
-    void _oob_watchdog_reset();
-    void _oob_busy();
     void _oob_tcp_data_hdlr();
     void _oob_ready();
     void _oob_scan_results();
-    void _oob_send_ok_received();
-    void _oob_send_fail_received();
     void _oob_connection();
     void _oob_disconnection();
     void _oob_link_disconnected();
@@ -559,7 +431,6 @@ private:
     bool _closed;
     bool _error;
     bool _busy;
-    bool _reset_done;
     int _sock_sending_id;
 
     // Modem's address info
@@ -567,6 +438,7 @@ private:
     char _gateway_buffer[16];
     char _netmask_buffer[16];
     char _mac_buffer[18];
+    uint8_t _wifi_mode;
 
     // Modem's socket info
     struct _sock_info {
@@ -575,7 +447,7 @@ private:
         char *tcp_data;
         int32_t tcp_data_avbl; // Data waiting on modem
         int32_t tcp_data_rcvd;
-        bool send_fail;     // Received 'SEND FAIL'. Expect user will close the socket.
+        bool send_fail; // Received 'SEND FAIL'. Expect user will close the socket.
     };
     struct _sock_info _sock_i[SOCKET_COUNT];
 

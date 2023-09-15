@@ -77,13 +77,10 @@ public:
     NINAW132Interface();
 #endif
 
-    /** NINAW132Interface lifetime
-     * @param tx        TX pin
-     * @param rx        RX pin
+   /** NINAW132Interface lifetime
      * @param debug     Enable debugging
      */
-    NINAW132Interface(PinName tx = MBED_CONF_NINA_W132_TX, PinName rx = MBED_CONF_NINA_W132_RX, bool debug = false, PinName rts = NC, PinName cts = NC, PinName rst = NC, PinName pwr = NC);
-
+    NINAW132Interface(bool debug = MBED_CONF_NINA_W132_DEBUG);
     /**
      * @brief NINAW132Interface default destructor
      */
@@ -213,21 +210,6 @@ public:
      *               see @a nsapi_error
      */
     virtual int scan(WiFiAccessPoint *res, unsigned count);
-
-    /** Scan for available networks
-     *
-     * This function will block.
-     *
-     * @param  ap    Pointer to allocated array to store discovered AP
-     * @param  count Size of allocated @a res array, or 0 to only count available AP
-     * @param  t_max Scan time for each channel - 0-1500ms. If 0 - uses default value
-     * @param  t_min Minimum for each channel in active mode - 0-1500ms. If 0 - uses default value. Omit in passive mode
-     * @return       Number of entries in @a, or if @a count was 0 number of available networks, negative on error
-     *               see @a nsapi_error
-     */
-    virtual int scan(WiFiAccessPoint *res, unsigned count, scan_mode mode = SCANMODE_PASSIVE,
-                     mbed::chrono::milliseconds_u32 t_max = mbed::chrono::milliseconds_u32(0),
-                     mbed::chrono::milliseconds_u32 t_min = mbed::chrono::milliseconds_u32(0));
 
     /** Translates a hostname to an IP address with specific version
      *
@@ -408,19 +390,8 @@ protected:
      */
     virtual nsapi_error_t set_blocking(bool blocking);
 
-    /** Set country code
-     *
-     *  @param track_ap      if TRUE, use country code used by the AP ESP is connected to,
-     *                       otherwise uses country_code always
-     *  @param country_code  ISO 3166-1 coded, 2 character alphanumeric country code assumed
-     *  @param len           Length of the country code
-     *  @param channel_start The channel number to start at
-     *  @param channel       Number of channels
-     *  @return              NSAPI_ERROR_OK on success, negative error code on failure.
-     */
-    nsapi_error_t set_country_code(bool track_ap, const char *country_code, int len, int channel_start, int channels);
-
 private:
+    bool _ninaw132_interface_debug;
     // AT layer
     NINAW132 _ninaw132;
     void refresh_conn_state_cb();
@@ -434,34 +405,6 @@ private:
         IFACE_STATUS_DISCONNECTING = 3
     } esp_connection_software_status_t;
 
-    // HW reset pin
-    class ResetPin {
-    public:
-        ResetPin(PinName rst_pin);
-        void rst_assert();
-        void rst_deassert();
-        bool is_connected();
-    private:
-        mbed::DigitalOut  _rst_pin;
-    } _rst_pin;
-
-    // HW power pin
-    class PowerPin {
-    public:
-        PowerPin(PinName pwr_pin);
-        void power_on();
-        void power_off();
-        bool is_connected();
-    private:
-        mbed::DigitalOut  _pwr_pin;
-    } _pwr_pin;
-
-    /** Assert the reset and power pins
-     *  NINAW132 has two pins serving similar purpose and this function asserts them both
-     *  if they are configured in mbed_app.json.
-     */
-    void _power_off();
-
     // Credentials
     static const int NINAW132_SSID_MAX_LENGTH = 32; /* 32 is what 802.11 defines as longest possible name */
     char ap_ssid[NINAW132_SSID_MAX_LENGTH + 1]; /* The longest possible name; +1 for the \0 */
@@ -470,14 +413,6 @@ private:
     char ap_pass[NINAW132_PASSPHRASE_MAX_LENGTH + 1]; /* The longest possible passphrase; +1 for the \0 */
     nsapi_security_t _ap_sec;
 
-    // Country code
-    struct _channel_info {
-        bool track_ap; // Set country code based on the AP ESP is connected to
-        char country_code[4]; // ISO 3166-1 coded, 2-3 character alphanumeric country code - +1 for the '\0' - assumed. Documentation doesn't tell.
-        int channel_start;
-        int channels;
-    };
-    struct _channel_info _ch_info;
 
     bool _if_blocking; // NetworkInterface, blocking or not
 #if MBED_CONF_RTOS_PRESENT
@@ -499,7 +434,7 @@ private:
     int _initialized;
     nsapi_error_t _connect_retval;
     nsapi_error_t _disconnect_retval;
-    bool _get_firmware_ok();
+    bool _get_firmware_version();
     nsapi_error_t _init(void);
     nsapi_error_t _reset();
 
