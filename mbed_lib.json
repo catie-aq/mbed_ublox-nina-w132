@@ -94,7 +94,8 @@
     "target_overrides": {
          "ZEST_CORE_STM32L4A6RG": {
             "tx": "UART1_TX",
-            "rx": "UART1_RX"
+            "rx": "UART1_RX",
+            "rst": "DIO2"
         }
     }
 }
