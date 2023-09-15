@@ -37,7 +37,7 @@ using std::milli;
 
 // activate / de-activate debug
 #define ninaw132_debug 0
-#define at_debug 1
+#define at_debug 0
 
 NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _at_v(-1, -1, -1),
