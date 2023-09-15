@@ -53,13 +53,13 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _conn_status(NSAPI_STATUS_DISCONNECTED)
 {
     _wifi_mode = WIFI_MODE_STATION;
-    _parser.debug_on(debug);
+    _parser.debug_on(at_debug);
     _parser.set_delimiter("\r\n");
     _parser.oob("+STARTUP", callback(this, &NINAW132::_oob_ready));
     _parser.oob("+UWSCAN:", callback(this, &NINAW132::_oob_scan_results));
-    _parser.oob("+UUNU:", callback(this, &NINAW132::_oob_connection));
     _parser.oob("+UUND:", callback(this, &NINAW132::_oob_disconnection));
     _parser.oob("+UUWLD:", callback(this, &NINAW132::_oob_link_disconnected));
+    _parser.oob("+UUWLE:", callback(this, &NINAW132::_oob_connection));
 
     uart_enable_input(true);
 
@@ -83,7 +83,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
 
 void NINAW132::hardware_reset()
 {
-    debug_if(_ninaw132_debug, "\tNINAW132: Hard reset Module\r\n");
+    debug_if(_ninaw132_debug, "NINAW132: Hard reset Module\r\n");
     _resetpin = 0;
     ThisThread::sleep_for(100ms);
     _resetpin = 1;
@@ -101,7 +101,7 @@ bool NINAW132::at_available()
         if (ready) {
             break;
         }
-        debug_if(_ninaw132_debug, "\tat_available(): Waiting AT response.\r\n");
+        debug_if(_ninaw132_debug, "at_available(): Waiting AT response.\r\n");
     }
     // Switch baud-rate from default one to assigned one
     if (MBED_CONF_NINA_W132_SERIAL_BAUDRATE != NINA_W132_DEFAULT_SERIAL_BAUDRATE) {
@@ -420,9 +420,9 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
     for (int i = 0; i < 2; i++) {
         if (keepalive) {
             done = _parser.send(
-                    "AT+UDDRP=%d,\"%s//%s:%d/?flush_tx=2\"", id, type, addr, port);
+                    "AT+UDCP=\"%s//%s:%d/?flush_tx=2\"", id, type, addr, port);
         } else {
-            done = _parser.send("AT+UDDRP=%d,\"%s//%s:%d\"", id, type, addr, port);
+            done = _parser.send("AT+UDCP=\"%s//%s:%d\"", id, type, addr, port);
         }
 
         if (done) {
