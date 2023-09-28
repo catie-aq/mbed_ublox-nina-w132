@@ -36,7 +36,7 @@
 #define NINA_W132_SEND_TIMEOUT 2s
 #endif
 #ifndef NINA_W132_RECV_TIMEOUT
-#define NINA_W132_RECV_TIMEOUT std::chrono::seconds(2)
+#define NINA_W132_RECV_TIMEOUT std::chrono::seconds(10)
 #endif
 #ifndef NINA_W132_MISC_TIMEOUT
 #define NINA_W132_MISC_TIMEOUT std::chrono::seconds(2)
@@ -63,6 +63,7 @@ class NINAW132 {
 public:
     static const int8_t WIFI_MODE_STATION = 1;
     static const int8_t WIFI_MODE_ACCESS_POINT = 2;
+    static const uint8_t TCP_UDP_DATA_FORMAT = 2; // 0: String, 1: hexa 2: binary
 
     enum disconnection_reason {
         UNKNOWN = 0,
@@ -230,13 +231,18 @@ public:
      */
     int scan(WiFiAccessPoint *res, unsigned limit);
 
-    /**Perform a dns query
+    /**
+     * Open a socketed connection
      *
-     * @param name Hostname to resolve
-     * @param ip   Buffer to store IP address
-     * @return 0 true on success, false on failure
+     * @param type the type of socket to open "UDP" or "TCP"
+     * @param id id to give the new socket, valid 0-4
+     * @param port port to open connection with
+     * @param addr the IP address of the destination
+     * @param port the port on the destination
+     * @param keepalive TCP connection's keep alive time, zero means disabled
+     * @return NSAPI_ERROR_OK in success, negative error code in failure
      */
-    bool dns_lookup(const char *name, char *ip);
+    nsapi_error_t open_tcp(int id, const char *addr, int port, int keepalive = 0);
 
     /**
      * Open a socketed connection
@@ -246,10 +252,9 @@ public:
      * @param port port to open connection with
      * @param addr the IP address of the destination
      * @param port the port on the destination
-     * @param tcp_keepalive TCP connection's keep alive time, zero means disabled
      * @return NSAPI_ERROR_OK in success, negative error code in failure
      */
-    nsapi_error_t open_tcp(int id, const char *addr, int port, int keepalive = 0);
+    nsapi_error_t open_udp(int id, const char *addr, int port);
 
     /**
      * Sends data to an open socket
@@ -270,6 +275,19 @@ public:
      * @return the number of bytes received
      */
     int32_t recv_tcp(int id,
+            void *data,
+            uint32_t amount,
+            mbed::chrono::milliseconds_u32 timeout = NINA_W132_RECV_TIMEOUT);
+
+    /**
+     * Receives datagram from an open UDP socket
+     *
+     * @param id id to receive from
+     * @param data placeholder for returned information
+     * @param amount number of bytes to be received
+     * @return the number of bytes received
+     */
+    int32_t recv_udp(int id,
             void *data,
             uint32_t amount,
             mbed::chrono::milliseconds_u32 timeout = NINA_W132_RECV_TIMEOUT);
@@ -324,7 +342,6 @@ public:
      */
     void attach(mbed::Callback<void()> status_cb);
 
-
     template <typename T, typename M> void attach(T *obj, M method)
     {
         attach(mbed::Callback<void()>(obj, method));
@@ -369,12 +386,14 @@ private:
     // FW version
     struct fw_at_version _at_v;
 
-    // debug 
+    // debug
     bool _ninaw132_debug;
 
     // FW version specific settings and functionalities
+    bool _udp_passive;
     bool _tcp_passive;
-    int32_t _recv_tcp_passive(int id,
+    uint8_t _data_format;
+    int32_t _at_data_recv(int id,
             void *data,
             uint32_t amount,
             std::chrono::duration<uint32_t, std::milli> timeout);
@@ -415,7 +434,6 @@ private:
     void _process_oob(std::chrono::duration<uint32_t, std::milli> timeout, bool all);
 
     // OOB message handlers
-    void _oob_packet_hdlr();
     void _oob_tcp_data_hdlr();
     void _oob_ready();
     void _oob_scan_results();

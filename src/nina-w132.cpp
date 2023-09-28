@@ -37,10 +37,14 @@ using std::milli;
 
 // activate / de-activate debug
 #define ninaw132_debug 0
-#define at_debug 0
+#define at_debug 1
 
 NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _at_v(-1, -1, -1),
+        _ninaw132_debug(debug || ninaw132_debug),
+        _udp_passive(true),
+        _tcp_passive(true),
+        _data_format(TCP_UDP_DATA_FORMAT),
         _callback(),
         _serial(tx, rx, MBED_CONF_NINA_W132_SERIAL_BAUDRATE),
         _parser(&_serial),
@@ -60,6 +64,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
     _parser.oob("+UUND:", callback(this, &NINAW132::_oob_disconnection));
     _parser.oob("+UUWLD:", callback(this, &NINAW132::_oob_link_disconnected));
     _parser.oob("+UUWLE:", callback(this, &NINAW132::_oob_connection));
+    // _parser.oob("+UUDATA:", callback(this, &NINAW132::_oob_tcp_data_hdlr));
 
     uart_enable_input(true);
 
@@ -75,8 +80,6 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
     _scan_r.res = NULL;
     _scan_r.limit = 0;
     _scan_r.cnt = 0;
-
-    _ninaw132_debug = debug || ninaw132_debug;
 
     hardware_reset();
 }
@@ -398,7 +401,7 @@ bool NINAW132::isConnected(void)
 
 nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepalive)
 {
-    static const char *type = "tcp";
+    static const char *type = "at-tcp";
     bool done = false;
 
     if (!addr) {
@@ -419,10 +422,9 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
 
     for (int i = 0; i < 2; i++) {
         if (keepalive) {
-            done = _parser.send(
-                    "AT+UDCP=\"%s//%s:%d/?flush_tx=2\"", id, type, addr, port);
+            done = _parser.send("AT+UDCP=\"%s://%s:%d/?flush_tx=2\"", type, addr, port);
         } else {
-            done = _parser.send("AT+UDCP=\"%s//%s:%d\"", id, type, addr, port);
+            done = _parser.send("AT+UDCP=\"%s://%s:%d\"", type, addr, port);
         }
 
         if (done) {
@@ -457,39 +459,70 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
     return done ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
 
-bool NINAW132::dns_lookup(const char *name, char *ip)
+nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port)
 {
-    // TO DO
-    // _smutex.lock();
-    // set_timeout(NINA_W132_DNS_TIMEOUT);
-    // bool done = _parser.send("AT+CIPDOMAIN=\"%s\"", name)
-    //         && _parser.recv("+CIPDOMAIN:%15[^\n]\n", ip) && _parser.recv("OK\n");
-    // set_timeout();
-    // _smutex.unlock();
+    static const char *type = "at-udp";
+    bool done = false;
 
-    return false;
+    if (!addr) {
+        return NSAPI_ERROR_PARAMETER;
+    }
+    _smutex.lock();
+
+    // process OOB so that _sock_i reflects the correct state of the socket
+    _process_oob(NINA_W132_SEND_TIMEOUT, true);
+
+    // See the reason above with close()
+    if (id >= SOCKET_COUNT) {
+        _smutex.unlock();
+        return NSAPI_ERROR_PARAMETER;
+    } else if (_sock_i[id].open) {
+        close(id);
+    }
+
+    for (int i = 0; i < 2; i++) {
+        done = _parser.send("AT+UDCP=\"%s://%s:%d\"", type, addr, port);
+
+        if (done) {
+            if (!_parser.recv("OK\n")) {
+                if (_sock_already) {
+                    _sock_already = false; // To be raised again by OOB msg
+                    done = close(id);
+                    if (!done) {
+                        break;
+                    }
+                }
+                if (_error) {
+                    _error = false;
+                    done = false;
+                }
+                continue;
+            }
+            _sock_i[id].open = true;
+            _sock_i[id].proto = NSAPI_UDP;
+            break;
+        }
+    }
+    _clear_socket_packets(id);
+
+    ThisThread::sleep_for(500ms);
+
+    _smutex.unlock();
+
+    debug_if(_ninaw132_debug,
+            "open_udp: UDP socket %d opened: %s . ",
+            id,
+            (_sock_i[id].open ? "true" : "false"));
+
+    return done ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
 
 nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
 {
-    if (_sock_i[id].proto == NSAPI_TCP) {
-        if (_sock_sending_id >= 0 && _sock_sending_id < SOCKET_COUNT) {
-            if (!_sock_i[id].send_fail) {
-                debug_if(_ninaw132_debug,
-                        "send(): Previous packet (socket %d) was not yet ACK-ed with SEND OK.",
-                        _sock_sending_id);
-                return NSAPI_ERROR_WOULD_BLOCK;
-            } else {
-                debug_if(_ninaw132_debug, "send(): Previous packet (socket %d) failed.", id);
-                return NSAPI_ERROR_DEVICE_ERROR;
-            }
-        }
-    }
 
-    nsapi_error_t ret = NSAPI_ERROR_DEVICE_ERROR;
-    int bytes_confirmed = 0;
+    nsapi_error_t ret = NSAPI_ERROR_OK;
 
-    // +CIPSEND supports up to 2048 bytes at a time
+    // +UDATW supports up to 2048 bytes at a time
     // Data stream can be truncated
     if (amount > 2048 && _sock_i[id].proto == NSAPI_TCP) {
         amount = 2048;
@@ -500,55 +533,36 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     }
 
     _smutex.lock();
-    // Mark this socket is sending. We allow only one actively sending socket because:
-    // 1. NINAW132 AT packets 'SEND OK'/'SEND FAIL' are not associated with socket ID. No way to
-    // tell them.
-    // 2. In original implementation, NINAW132::send() is synchronous, which implies only one
-    // actively sending socket.
     _sock_sending_id = id;
     set_timeout(NINA_W132_SEND_TIMEOUT);
     _busy = false;
     _error = false;
-    if (!_parser.send("AT+UDATW=%d,%" PRIu32, id, amount)) {
-        debug_if(_ninaw132_debug, "send(): AT+CIPSEND failed.");
-        goto END;
-    }
 
-    if (!_parser.recv(">")) {
-        // This means NINAW132 hasn't even started to receive data
-        debug_if(_ninaw132_debug, "send(): Didn't get \">\"");
-        if (_sock_i[id].proto == NSAPI_TCP) {
-            ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
-        } else if (_sock_i[id].proto == NSAPI_UDP) {
-            ret = NSAPI_ERROR_NO_MEMORY;
+    if (_data_format == TCP_UDP_DATA_FORMAT) {
+        _parser.send("AT+UDATW=%d,%d,%d", id, _data_format, amount);
+        if (!_parser.recv(">")) {
+            // This means NINAW132 hasn't even started to receive data
+            debug_if(_ninaw132_debug, "send(): Didn't get \">\"");
+            if (_sock_i[id].proto == NSAPI_TCP) {
+                ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
+            } else if (_sock_i[id].proto == NSAPI_UDP) {
+                ret = NSAPI_ERROR_NO_MEMORY;
+            }
+            goto END;
         }
+        // send data
+        _parser.write((char *)data, (int)amount);
+
+    } else {
+        ret = NSAPI_ERROR_UNSUPPORTED;
         goto END;
     }
 
-    if (_parser.write((char *)data, (int)amount) < 0) {
+    if (!_parser.recv("OK")) {
         debug_if(_ninaw132_debug, "send(): Failed to write serial data");
         // Serial is not working, serious error, reset needed.
         ret = NSAPI_ERROR_DEVICE_ERROR;
         goto END;
-    }
-
-    // The "Recv X bytes" is not documented.
-    if (!_parser.recv("Recv %d bytes", &bytes_confirmed)) {
-        debug_if(_ninaw132_debug, "send(): Bytes not confirmed.");
-        if (_sock_i[id].proto == NSAPI_TCP) {
-            ret = NSAPI_ERROR_WOULD_BLOCK;
-        } else if (_sock_i[id].proto == NSAPI_UDP) {
-            ret = NSAPI_ERROR_NO_MEMORY;
-        }
-    } else if (bytes_confirmed != (int)amount && _sock_i[id].proto == NSAPI_UDP) {
-        debug_if(_ninaw132_debug,
-                "send(): Error: confirmed %d bytes, but expected %d.",
-                bytes_confirmed,
-                amount);
-        ret = NSAPI_ERROR_DEVICE_ERROR;
-    } else {
-        // TCP can accept partial writes (if they ever happen)
-        ret = bytes_confirmed;
     }
 
 END:
@@ -593,72 +607,6 @@ END:
     return ret;
 }
 
-void NINAW132::_oob_packet_hdlr()
-{
-    int id;
-    int port;
-    int amount;
-    int pdu_len;
-
-    // Get socket id
-    if (!_parser.scanf(",%d,", &id)) {
-        return;
-    }
-
-    if (_tcp_passive && _sock_i[id].open == true && _sock_i[id].proto == NSAPI_TCP) {
-        // For TCP +IPD return only id and amount and it is independent on AT+CIPDINFO settings
-        // Unfortunately no information about that in ESP manual but it has sense.
-        if (_parser.recv("%d\n", &amount)) {
-            _sock_i[id].tcp_data_avbl = amount;
-
-            // notify data is available
-            if (_callback) {
-                _callback();
-            }
-        }
-        return;
-    } else {
-        if (!(_parser.scanf("%d,", &amount) && _parser.scanf("%15[^,],", _ip_buffer)
-                    && _parser.scanf("%d:", &port))) {
-            return;
-        }
-    }
-
-    pdu_len = sizeof(struct packet) + amount;
-
-    if ((_heap_usage + pdu_len) > MBED_CONF_NINA_W132_SOCKET_BUFSIZE) {
-        debug_if(_ninaw132_debug, "\"nina-w132.socket-bufsize\"-limit exceeded, packet dropped");
-        return;
-    }
-
-    struct packet *packet = (struct packet *)malloc(pdu_len);
-    if (!packet) {
-        debug_if(_ninaw132_debug,
-                "_oob_packet_hdlr(): Out of memory, unable to allocate memory for packet.");
-        return;
-    }
-    _heap_usage += pdu_len;
-
-    packet->id = id;
-    if (_sock_i[id].proto == NSAPI_UDP) {
-        packet->remote_port = port;
-        memcpy(packet->remote_ip, _ip_buffer, 16);
-    }
-    packet->len = amount;
-    packet->alloc_len = amount;
-    packet->next = 0;
-
-    if (_parser.read((char *)(packet + 1), amount) < amount) {
-        free(packet);
-        _heap_usage -= pdu_len;
-        return;
-    }
-
-    // append to packet list
-    *_packets_end = packet;
-    _packets_end = &packet->next;
-}
-
 void NINAW132::_process_oob(duration<uint32_t, milli> timeout, bool all)
 {
     set_timeout(timeout);
@@ -674,52 +622,50 @@ void NINAW132::bg_process_oob(duration<uint32_t, milli> timeout, bool all)
     _smutex.unlock();
 }
 
-int32_t NINAW132::_recv_tcp_passive(
+int32_t NINAW132::_at_data_recv(
         int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
 {
     int32_t ret = NSAPI_ERROR_WOULD_BLOCK;
+    bool done = false;
+    uint16_t data_available = 0;
+    char *ptr = (char *)data;
 
     _smutex.lock();
 
-    _process_oob(timeout, true);
+    set_timeout(timeout);
 
-    if (_sock_i[id].tcp_data_avbl != 0) {
-        _sock_i[id].tcp_data = (char *)data;
-        _sock_i[id].tcp_data_rcvd = NSAPI_ERROR_WOULD_BLOCK;
-        _sock_active_id = id;
+    _sock_active_id = id;
 
-        // +CIPRECVDATA supports up to 2048 bytes at a time
-        amount = amount > 2048 ? 2048 : amount;
+    // TODO: max bytes supported ?
+    amount = amount > 2048 ? 2048 : amount;
 
-        // NOTE: documentation v3.0 says '+CIPRECVDATA:<data_len>,' but it's not how the FW
-        // responds...
-        bool done = _parser.send("AT+CIPRECVDATA=%d,%" PRIu32, id, amount) && _parser.recv("OK\n");
+    ThisThread::sleep_for(5s);
 
-        _sock_i[id].tcp_data = NULL;
-        _sock_active_id = -1;
-
-        if (!done) {
+    // check if data available
+    done = _parser.send("AT+UDATR=%d,%d,0", id, _data_format) && _parser.recv("OK");
+    if (done) {
+        if (!_parser.recv("+UUDATA:%*d,%u\n", &data_available)) {
+            debug_if(_ninaw132_debug, "Failed to read +UUDATA response\n");
             goto BUSY;
         }
-
-        // update internal variable tcp_data_avbl to reflect the remaining data
-        if (_sock_i[id].tcp_data_rcvd > 0) {
-            if (_sock_i[id].tcp_data_rcvd > (int32_t)amount) {
-                MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_EBADMSG),
-                        "NINAW132::_recv_tcp_passive() too much data from modem\n");
-            }
-            if (_sock_i[id].tcp_data_avbl > _sock_i[id].tcp_data_rcvd) {
-                _sock_i[id].tcp_data_avbl -= _sock_i[id].tcp_data_rcvd;
-            } else {
-                _sock_i[id].tcp_data_avbl = 0;
-            }
-        }
-
-        ret = _sock_i[id].tcp_data_rcvd;
     }
+    printf("data available: %d\n", data_available);
 
-    if (!_sock_i[id].open && ret == NSAPI_ERROR_WOULD_BLOCK) {
-        ret = 0;
+    if (data_available > 0) {
+        if (!(_parser.send("AT+UDATR=%d,%d,%d", id, _data_format, data_available)
+                    && _parser.recv("+UDATR:%*d\n"))) {
+            debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+            goto BUSY;
+        } else {
+            // read data
+            _parser.read((char *)data, data_available);
+            ret = data_available;
+            // ignore OK ?
+            // check if new data are available ? (+UUDATA:1,0)
+        }
+    } else {
+        debug_if(_ninaw132_debug, "No TCP/UDP data availbale\n");
+        goto BUSY;
     }
 
     _smutex.unlock();
@@ -741,50 +687,19 @@ BUSY:
 int32_t NINAW132::recv_tcp(int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
 {
     if (_tcp_passive) {
-        return _recv_tcp_passive(id, data, amount, timeout);
+        return _at_data_recv(id, data, amount, timeout);
     }
 
-    _smutex.lock();
+    return NSAPI_ERROR_UNSUPPORTED;
+}
 
-    // check if any packets are ready for us
-    for (struct packet **p = &_packets; *p; p = &(*p)->next) {
-        if ((*p)->id == id) {
-            struct packet *q = *p;
-
-            if (q->len <= amount) { // Return and remove full packet
-                memcpy(data, q + 1, q->len);
-
-                if (_packets_end == &(*p)->next) {
-                    _packets_end = p;
-                }
-                *p = (*p)->next;
-
-                _smutex.unlock();
-
-                uint32_t pdu_len = sizeof(struct packet) + q->alloc_len;
-                uint32_t len = q->len;
-                free(q);
-                _heap_usage -= pdu_len;
-                return len;
-            } else { // return only partial packet
-                memcpy(data, q + 1, amount);
-
-                q->len -= amount;
-                memmove(q + 1, (uint8_t *)(q + 1) + amount, q->len);
-
-                _smutex.unlock();
-                return amount;
-            }
-        }
-    }
-    if (!_sock_i[id].open) {
-        _smutex.unlock();
-        return 0;
+int32_t NINAW132::recv_udp(int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
+{
+    if (_udp_passive) {
+        return _at_data_recv(id, data, amount, timeout);
     }
 
-    _smutex.unlock();
-
-    return NSAPI_ERROR_WOULD_BLOCK;
+    return NSAPI_ERROR_UNSUPPORTED;
 }
 
 void NINAW132::_clear_socket_packets(int id)
@@ -829,7 +744,7 @@ bool NINAW132::close(int id)
     // May take a second try if device is busy
     for (unsigned i = 0; i < 2; i++) {
         _smutex.lock();
-        if (_parser.send("AT+CIPCLOSE=%d", id)) {
+        if (_parser.send("AT+UDCPC=%d", id)) {
             if (!_parser.recv("OK\n")) {
                 if (_closed) { // UNLINK ERROR
                     _closed = false;
@@ -839,7 +754,7 @@ bool NINAW132::close(int id)
                     _clear_socket_sending(id);
                     _smutex.unlock();
                     // NINAW132 has a habit that it might close a socket on its own.
-                    debug_if(_ninaw132_debug, "close(%d): socket close OK with UNLINK ERROR", id);
+                    debug_if(_ninaw132_debug, "close(%d): socket close OK with UNLINK ERROR\n", id);
                     return true;
                 }
             } else {
@@ -848,7 +763,7 @@ bool NINAW132::close(int id)
                 // Closed, so this socket escapes from SEND FAIL status
                 _clear_socket_sending(id);
                 _smutex.unlock();
-                debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+CIPCLOSE OK", id);
+                debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+UDCPC OK\n", id);
                 return true;
             }
         }

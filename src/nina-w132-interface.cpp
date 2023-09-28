@@ -514,6 +514,23 @@ int NINAW132Interface::scan(WiFiAccessPoint *res, unsigned count)
     return ret;
 }
 
+// nsapi_error_t NINAW132Interface::gethostbyname(const char *name,
+//         SocketAddress *address,
+//         nsapi_version_t version,
+//         const char *interface_name)
+// {
+//     char ip[NSAPI_IPv4_SIZE];
+//     memset(ip, 0, NSAPI_IPv4_SIZE);
+//     if (!_ninaw132.dns_lookup(name, ip, address->get_port())) {
+//         return NSAPI_ERROR_DNS_FAILURE;
+//     }
+//     if (!address->set_ip_address(ip)) {
+//         return NSAPI_ERROR_DNS_FAILURE;
+//     }
+
+//     return NSAPI_ERROR_OK;
+// }
+
 #if MBED_CONF_NINAW132_BUILT_IN_DNS
 nsapi_error_t NINAW132Interface::gethostbyname(const char *name,
         SocketAddress *address,
@@ -697,10 +714,8 @@ int NINAW132Interface::socket_connect(void *handle, const SocketAddress &addr)
     }
 
     if (socket->proto == NSAPI_UDP) {
-        return NSAPI_ERROR_UNSUPPORTED;
-        // ret = _ninaw132.open_udp(
-        //         socket->id, addr.get_ip_address(), addr.get_port(), _sock_i[socket->id].sport,
-        //         0);
+        ret = _ninaw132.open_udp(
+                socket->id, addr.get_ip_address(), addr.get_port());
     } else {
         ret = _ninaw132.open_tcp(
                 socket->id, addr.get_ip_address(), addr.get_port(), socket->keepalive);
@@ -772,8 +787,11 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
         if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
             socket->connected = false;
         }
-    } else {
-        // Unsupported
+    } else if (socket->proto == NSAPI_UDP) {
+        recv = _ninaw132.recv_udp(socket->id, data, size);
+        if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
+            socket->connected = false;
+        }
     }
 
     return recv;
