@@ -225,14 +225,16 @@ public:
      *                  version is chosen by the stack (defaults to NSAPI_UNSPEC)
      *  @return         0 on success, negative error code on failure
      */
-#if MBED_CONF_NINAW132_BUILT_IN_DNS
-    nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t version, const char *interface_name);
-#else
-    using NetworkInterface::gethostbyname;
-#endif
 
-    using NetworkInterface::gethostbyname_async;
-    using NetworkInterface::gethostbyname_async_cancel;
+    // nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t version, const char *interface_name);
+// #if MBED_CONF_NINAW132_BUILT_IN_DNS
+//     nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t version, const char *interface_name);
+// #else
+//     using NetworkInterface::gethostbyname;
+// #endif
+
+//     using NetworkInterface::gethostbyname_async;
+//     using NetworkInterface::gethostbyname_async_cancel;
 
     /** Add a domain name server to list of servers to query
      *
