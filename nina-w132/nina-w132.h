@@ -61,9 +61,13 @@ struct nina_w132_socket {
  */
 class NINAW132 {
 public:
+    // wifi mode
     static const int8_t WIFI_MODE_STATION = 1;
     static const int8_t WIFI_MODE_ACCESS_POINT = 2;
-    static const uint8_t TCP_UDP_DATA_FORMAT = 2; // 0: String, 1: hexa 2: binary
+    // TCP UDP data format
+    static const uint8_t TCP_UDP_STRING_DATA_FORMAT = 0; 
+    static const uint8_t TCP_UDP_HEXA_DATA_FORMAT = 1;
+    static const uint8_t TCP_UDP_BINARY_DATA_FORMAT = 2;
 
     enum disconnection_reason {
         UNKNOWN = 0,

@@ -44,7 +44,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _ninaw132_debug(debug || ninaw132_debug),
         _udp_passive(true),
         _tcp_passive(true),
-        _data_format(TCP_UDP_DATA_FORMAT),
+        _data_format(TCP_UDP_HEXA_DATA_FORMAT),
         _callback(),
         _serial(tx, rx, MBED_CONF_NINA_W132_SERIAL_BAUDRATE),
         _parser(&_serial),
@@ -522,14 +522,19 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
 
     nsapi_error_t ret = NSAPI_ERROR_OK;
 
-    // +UDATW supports up to 2048 bytes at a time
-    // Data stream can be truncated
-    if (amount > 2048 && _sock_i[id].proto == NSAPI_TCP) {
-        amount = 2048;
-        // Datagram must stay intact
-    } else if (amount > 2048 && _sock_i[id].proto == NSAPI_UDP) {
-        debug_if(_ninaw132_debug, "send(): UDP datagram maximum size is 2048 .");
-        return NSAPI_ERROR_PARAMETER;
+    // +UDATW supports up to 2000 bytes for Binary and 256 bytes for String and hexadecimal format
+    // (cf p.38 of AT commands manual)
+
+    printf("data Amount: %d\n", amount);
+
+    if (_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
+        if (amount > 2000) {
+            amount = 2000;
+        }
+    } else {
+        if (amount > 256) {
+            amount = 256;
+        }
     }
 
     _smutex.lock();
@@ -538,11 +543,11 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     _busy = false;
     _error = false;
 
-    if (_data_format == TCP_UDP_DATA_FORMAT) {
+    if (_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
         _parser.send("AT+UDATW=%d,%d,%d", id, _data_format, amount);
         if (!_parser.recv(">")) {
             // This means NINAW132 hasn't even started to receive data
-            debug_if(_ninaw132_debug, "send(): Didn't get \">\"");
+            debug_if(_ninaw132_debug, "send(): Didn't get \">\"\n");
             if (_sock_i[id].proto == NSAPI_TCP) {
                 ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
             } else if (_sock_i[id].proto == NSAPI_UDP) {
@@ -554,8 +559,33 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
         _parser.write((char *)data, (int)amount);
 
     } else {
-        ret = NSAPI_ERROR_UNSUPPORTED;
-        goto END;
+        char cmd[300] = { 0 }; // to ensure the max amount length + cmd length
+        if (_data_format == TCP_UDP_STRING_DATA_FORMAT) {
+            // format command
+            sprintf(cmd, "AT+UDATW=%d,%d,\"", id, _data_format);
+            // send command and data
+            _parser.write(cmd, strlen(cmd));
+            _parser.write((char *)data, amount);
+            _parser.write("\"\r\n", 3);
+        } else {
+            // format command
+            sprintf(cmd, "AT+UDATW=%d,%d,", id, _data_format);
+            // copy and convert data
+            char *convert_data = new char[amount];
+            memcpy(convert_data, data, amount);
+            int offset = 0;
+            char *hex_to_string = new char[(amount * 2) + 1];
+            // format data
+            for (int i = 0; i < amount; i++) {
+                sprintf(&hex_to_string[i * 2], "%02X", convert_data[i]);
+            }
+            strcat(cmd, hex_to_string);
+            // send command + data
+            _parser.send(cmd);
+            // delete buffers
+            delete hex_to_string;
+            delete convert_data;
+        }
     }
 
     if (!_parser.recv("OK")) {
@@ -639,6 +669,7 @@ int32_t NINAW132::_at_data_recv(
     // TODO: max bytes supported ?
     amount = amount > 2048 ? 2048 : amount;
 
+    // wait data
     ThisThread::sleep_for(5s);
 
     // check if data available
@@ -652,21 +683,37 @@ int32_t NINAW132::_at_data_recv(
     printf("data available: %d\n", data_available);
 
     if (data_available > 0) {
-        if (!(_parser.send("AT+UDATR=%d,%d,%d", id, _data_format, data_available)
-                    && _parser.recv("+UDATR:%*d\n"))) {
-            debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
-            goto BUSY;
-        } else {
-            // read data
-            _parser.read((char *)data, data_available);
-            ret = data_available;
-            // ignore OK ?
-            // check if new data are available ? (+UUDATA:1,0)
+        switch (_data_format) {
+            case TCP_UDP_HEXA_DATA_FORMAT:
+                done = _parser.send("AT+UDATR=%d,%d,%d", id, _data_format, data_available)
+                        & _parser.recv("+UDATR:%*d,");
+                break;
+            case TCP_UDP_BINARY_DATA_FORMAT:
+            default:
+                done = _parser.send("AT+UDATR=%d,%d,%d", id, _data_format, data_available)
+                        & _parser.recv("+UDATR:%*d\r\n");
+                break;
         }
-    } else {
-        debug_if(_ninaw132_debug, "No TCP/UDP data availbale\n");
+    }
+
+    if (!done) {
+        debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
         goto BUSY;
     }
+
+    // read data
+    _parser.read((char *)data, data_available);
+    ret = data_available;
+
+    // debug
+    printf("\nread data: ");
+    for (uint8_t i = 0; i < data_available; i++) {
+        printf("%02X", ptr[i]);
+    }
+    printf("\n");
+
+    // ignore OK ?
+    // check if new data are available ? (+UUDATA:1,0)
 
     _smutex.unlock();
     return ret;
