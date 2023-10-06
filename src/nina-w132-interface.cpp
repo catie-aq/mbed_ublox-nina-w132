@@ -43,7 +43,9 @@ NINAW132Interface::NINAW132Interface(bool debug):
         _if_blocking(true),
 #if MBED_CONF_RTOS_PRESENT
         _if_connected(_cmutex),
+        _if_data_available(_smutex),
 #endif
+        _socket_stat_cb(0),
         _initialized(false),
         _connect_retval(NSAPI_ERROR_OK),
         _disconnect_retval(NSAPI_ERROR_OK),
@@ -65,7 +67,8 @@ NINAW132Interface::NINAW132Interface(bool debug):
     _ninaw132.sigio(this, &NINAW132Interface::event);
     _ninaw132.set_timeout();
     _ninaw132.attach(this, &NINAW132Interface::refresh_conn_state_cb);
-
+    _ninaw132.attach_socket_recv(this, &NINAW132Interface::refresh_socket_data_state_cb);
+   
     for (int i = 0; i < NINAW132_SOCKET_COUNT; i++) {
         _sock_i[i].open = false;
         _sock_i[i].sport = 0;
@@ -514,48 +517,6 @@ int NINAW132Interface::scan(WiFiAccessPoint *res, unsigned count)
     return ret;
 }
 
-// nsapi_error_t NINAW132Interface::gethostbyname(const char *name,
-//         SocketAddress *address,
-//         nsapi_version_t version,
-//         const char *interface_name)
-// {
-//     char ip[NSAPI_IPv4_SIZE];
-//     memset(ip, 0, NSAPI_IPv4_SIZE);
-//     if (!_ninaw132.dns_lookup(name, ip, address->get_port())) {
-//         return NSAPI_ERROR_DNS_FAILURE;
-//     }
-//     if (!address->set_ip_address(ip)) {
-//         return NSAPI_ERROR_DNS_FAILURE;
-//     }
-
-//     return NSAPI_ERROR_OK;
-// }
-
-#if MBED_CONF_NINAW132_BUILT_IN_DNS
-nsapi_error_t NINAW132Interface::gethostbyname(const char *name,
-        SocketAddress *address,
-        nsapi_version_t version,
-        const char *interface_name)
-{
-    char ip[NSAPI_IPv4_SIZE];
-    memset(ip, 0, NSAPI_IPv4_SIZE);
-    if (!_ninaw132.dns_lookup(name, ip)) {
-        return NSAPI_ERROR_DNS_FAILURE;
-    }
-    if (!address->set_ip_address(ip)) {
-        return NSAPI_ERROR_DNS_FAILURE;
-    }
-
-    return NSAPI_ERROR_OK;
-}
-
-nsapi_error_t NINAW132Interface::add_dns_server(
-        const SocketAddress &address, const char *interface_name)
-{
-    return NSAPI_ERROR_OK;
-}
-#endif
-
 bool NINAW132Interface::_get_firmware_version()
 {
     NINAW132::fw_at_version at_v = _ninaw132.get_firmware_version();
@@ -564,13 +525,6 @@ bool NINAW132Interface::_get_firmware_version()
             at_v.major,
             at_v.minor,
             at_v.patch);
-    // if (at_v.major < NINA_W132_AT_VERSION_MAJOR) {
-    //     debug_if(_ninaw132_interface_debug, "NINAW132: ERROR: AT Firmware v%d incompatible with
-    //     this driver.", at_v.major); debug_if(_ninaw132_interface_debug, "Update at least to v%d -
-    //     https://developer.mbed.org/teams/NINAW132/wiki/Firmware-Update\n",
-    //     NINA_W132_AT_VERSION_MAJOR); MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER,
-    //     MBED_ERROR_UNSUPPORTED), "Too old AT firmware");
-    // }
 
     return true;
 }
@@ -589,7 +543,6 @@ nsapi_error_t NINAW132Interface::_init(void)
             return NSAPI_ERROR_DEVICE_ERROR;
         }
         // TODO: set wifi default mode
-        // 
 
         _initialized = true;
     }
@@ -598,8 +551,8 @@ nsapi_error_t NINAW132Interface::_init(void)
 
 nsapi_error_t NINAW132Interface::_reset()
 {
-   _ninaw132.hardware_reset();
-   _ninaw132.uart_enable_input(true);
+    _ninaw132.hardware_reset();
+    _ninaw132.uart_enable_input(true);
 
     return _ninaw132.at_available() ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
@@ -714,8 +667,7 @@ int NINAW132Interface::socket_connect(void *handle, const SocketAddress &addr)
     }
 
     if (socket->proto == NSAPI_UDP) {
-        ret = _ninaw132.open_udp(
-                socket->id, addr.get_ip_address(), addr.get_port());
+        ret = _ninaw132.open_udp(socket->id, addr.get_ip_address(), addr.get_port());
     } else {
         ret = _ninaw132.open_tcp(
                 socket->id, addr.get_ip_address(), addr.get_port(), socket->keepalive);
@@ -772,27 +724,41 @@ int NINAW132Interface::socket_send(void *handle, const void *data, unsigned size
 int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
 {
     struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
+    cv_status status;
+    int32_t recv = 0;
 
     if (!socket) {
         return NSAPI_ERROR_NO_SOCKET;
     }
 
+    printf("Socket recv: socket id: %d\n", socket->id);
+
     if (!_sock_i[socket->id].open) {
         return NSAPI_ERROR_CONNECTION_LOST;
     }
 
-    int32_t recv;
-    if (socket->proto == NSAPI_TCP) {
-        recv = _ninaw132.recv_tcp(socket->id, data, size);
-        if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
-            socket->connected = false;
-        }
-    } else if (socket->proto == NSAPI_UDP) {
-        recv = _ninaw132.recv_udp(socket->id, data, size);
-        if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
-            socket->connected = false;
+    _smutex.lock();
+
+#if MBED_CONF_RTOS_PRESENT
+    status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
+#endif
+
+    if (status == rtos::cv_status::no_timeout) {
+        if (socket->proto == NSAPI_TCP) {
+
+            recv = _ninaw132.recv_tcp(socket->id, data, size);
+            if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
+                socket->connected = false;
+            }
+        } else {
+            recv = _ninaw132.recv_udp(socket->id, data, size);
+            if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
+                socket->connected = false;
+            }
         }
     }
+
+    _smutex.unlock();
 
     return recv;
 }
@@ -1002,6 +968,20 @@ void NINAW132Interface::refresh_conn_state_cb()
         }
 
         _conn_stat_cb(NSAPI_EVENT_CONNECTION_STATUS_CHANGE, _conn_stat);
+    }
+}
+
+void NINAW132Interface::refresh_socket_data_state_cb(int *sock_id)
+{
+    _smutex.lock();
+#if MBED_CONF_RTOS_PRESENT
+        _if_data_available.notify_all();
+#endif
+    _smutex.unlock();
+
+    // not implemented
+    if (_socket_stat_cb) {
+        _socket_stat_cb(sock_id);
     }
 }
 
