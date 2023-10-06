@@ -304,6 +304,13 @@ public:
      */
     bool close(int id);
 
+   /**
+     * Socket data available
+     *
+     * @return true if data are available
+     */
+    bool data_available(int socket_id);
+
     /**
      * Allows timeout to be changed between commands
      *
@@ -350,6 +357,19 @@ public:
     {
         attach(mbed::Callback<void()>(obj, method));
     }
+
+    /**
+     * Attach a function to call whenever socket receive data state has changed.
+     *
+     * @param func A pointer to a void function, or 0 to set as none
+     */
+    void attach_socket_recv(Callback<void(int *current_socket_id)> socket_recv_cb);
+
+    template <typename T, typename M> void attach_socket_recv(T *obj, M method)
+    {
+        attach_socket_recv(mbed::Callback<void(int *current_socket_id)>(obj, method));
+    }
+
 
     /** Get the connection status
      *
@@ -430,6 +450,7 @@ private:
     void _clear_socket_packets(int id);
     void _clear_socket_sending(int id);
     int _sock_active_id;
+    mbed::Callback<void(int *current_socket_id)> _socket_recv_cb; // NINAW132Interface registered
 
     // Memory statistics
     size_t _heap_usage; // (Socket data buffer usage)
@@ -467,8 +488,8 @@ private:
         bool open;
         nsapi_protocol_t proto;
         char *tcp_data;
-        int32_t tcp_data_avbl; // Data waiting on modem
-        int32_t tcp_data_rcvd;
+        bool tcp_data_avbl; // Data waiting on modem
+        uint16_t len_tcp_data_rcvd;
         bool send_fail; // Received 'SEND FAIL'. Expect user will close the socket.
     };
     struct _sock_info _sock_i[SOCKET_COUNT];

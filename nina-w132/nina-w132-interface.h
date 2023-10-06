@@ -393,10 +393,13 @@ protected:
     virtual nsapi_error_t set_blocking(bool blocking);
 
 private:
+    void refresh_conn_state_cb();
+    void refresh_socket_data_state_cb(int *sock_id);
+    
+    // Debug
     bool _ninaw132_interface_debug;
     // AT layer
     NINAW132 _ninaw132;
-    void refresh_conn_state_cb();
 
     /** Status of software connection
      */
@@ -405,7 +408,7 @@ private:
         IFACE_STATUS_CONNECTING = 1,
         IFACE_STATUS_CONNECTED = 2,
         IFACE_STATUS_DISCONNECTING = 3
-    } esp_connection_software_status_t;
+    } ninaw132_connection_software_status_t;
 
     // Credentials
     static const int NINAW132_SSID_MAX_LENGTH = 32; /* 32 is what 802.11 defines as longest possible name */
@@ -419,6 +422,7 @@ private:
     bool _if_blocking; // NetworkInterface, blocking or not
 #if MBED_CONF_RTOS_PRESENT
     rtos::ConditionVariable _if_connected;
+    rtos::ConditionVariable _if_data_available;
 #endif
 
     // connect status reporting
@@ -431,6 +435,7 @@ private:
         uint16_t sport;
     };
     struct _sock_info _sock_i[NINAW132_SOCKET_COUNT];
+    mbed::Callback<void(int *sock_id)> _socket_stat_cb;
 
     // Driver's state
     int _initialized;
@@ -463,7 +468,8 @@ private:
     void _connect_async();
     void _disconnect_async();
     rtos::Mutex _cmutex; // Protect asynchronous connection logic
-    esp_connection_software_status_t _software_conn_stat;
+    rtos::Mutex _smutex; // Protect asynchronous connection logic
+    ninaw132_connection_software_status_t _software_conn_stat;
     bool _dhcp;
 
 };
