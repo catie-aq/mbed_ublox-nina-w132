@@ -395,6 +395,8 @@ protected:
 private:
     void refresh_conn_state_cb();
     void refresh_socket_data_state_cb(int *sock_id);
+    void refresh_socket_open_state_cb(int *sock_id);
+    int _socket_open(void *handle);
     
     // Debug
     bool _ninaw132_interface_debug;
@@ -423,6 +425,7 @@ private:
 #if MBED_CONF_RTOS_PRESENT
     rtos::ConditionVariable _if_connected;
     rtos::ConditionVariable _if_data_available;
+    rtos::ConditionVariable _if_socket_opened;
 #endif
 
     // connect status reporting
@@ -469,6 +472,7 @@ private:
     void _disconnect_async();
     rtos::Mutex _cmutex; // Protect asynchronous connection logic
     rtos::Mutex _smutex; // Protect asynchronous connection logic
+    rtos::Mutex _omutex; // Protect asynchronous connection logic
     ninaw132_connection_software_status_t _software_conn_stat;
     bool _dhcp;
 

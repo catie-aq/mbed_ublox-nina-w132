@@ -44,6 +44,7 @@ NINAW132Interface::NINAW132Interface(bool debug):
 #if MBED_CONF_RTOS_PRESENT
         _if_connected(_cmutex),
         _if_data_available(_smutex),
+        _if_socket_opened(_smutex),
 #endif
         _socket_stat_cb(0),
         _initialized(false),
@@ -68,6 +69,7 @@ NINAW132Interface::NINAW132Interface(bool debug):
     _ninaw132.set_timeout();
     _ninaw132.attach(this, &NINAW132Interface::refresh_conn_state_cb);
     _ninaw132.attach_socket_recv(this, &NINAW132Interface::refresh_socket_data_state_cb);
+    _ninaw132.attach_socket_open(this, &NINAW132Interface::refresh_socket_open_state_cb);
    
     for (int i = 0; i < NINAW132_SOCKET_COUNT; i++) {
         _sock_i[i].open = false;
@@ -559,6 +561,39 @@ nsapi_error_t NINAW132Interface::_reset()
 
 int NINAW132Interface::socket_open(void **handle, nsapi_protocol_t proto)
 {
+    // // Look for an unused socket
+    // int id = -1;
+
+    // for (int i = 0; i < NINAW132_SOCKET_COUNT; i++) {
+    //     if (!_sock_i[i].open) {
+    //         id = i;
+    //         _sock_i[i].open = true;
+    //         break;
+    //     }
+    // }
+
+    // if (id == -1) {
+    //     return NSAPI_ERROR_NO_SOCKET;
+    // }
+
+    // printf("\n\n[socket open] id: %d\n\n", id);
+
+    struct nina_w132_socket *socket = new struct nina_w132_socket;
+    if (!socket) {
+        return NSAPI_ERROR_NO_SOCKET;
+    }
+
+    socket->id = -1; // set to the socket connect
+    socket->proto = proto;
+    socket->connected = false;
+    socket->bound = false;
+    socket->keepalive = 0;
+    *handle = socket;
+    return 0;
+}
+
+int NINAW132Interface::_socket_open(void *handle)
+{
     // Look for an unused socket
     int id = -1;
 
@@ -574,17 +609,15 @@ int NINAW132Interface::socket_open(void **handle, nsapi_protocol_t proto)
         return NSAPI_ERROR_NO_SOCKET;
     }
 
-    struct nina_w132_socket *socket = new struct nina_w132_socket;
+    struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
     if (!socket) {
         return NSAPI_ERROR_NO_SOCKET;
     }
 
+    printf("\n\n[socket open] id: %d\n\n", id);
+
     socket->id = id;
-    socket->proto = proto;
-    socket->connected = false;
-    socket->bound = false;
-    socket->keepalive = 0;
-    *handle = socket;
+    handle = socket;
     return 0;
 }
 
@@ -661,17 +694,30 @@ int NINAW132Interface::socket_connect(void *handle, const SocketAddress &addr)
 {
     struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
     nsapi_error_t ret;
+    cv_status status;
+
+    // manage socket id for the NINAW132 module
+    _socket_open(handle);
 
     if (!socket) {
         return NSAPI_ERROR_NO_SOCKET;
     }
-
+    printf("[socket connect] socket id: %d\n", socket->id);
     if (socket->proto == NSAPI_UDP) {
         ret = _ninaw132.open_udp(socket->id, addr.get_ip_address(), addr.get_port());
     } else {
         ret = _ninaw132.open_tcp(
                 socket->id, addr.get_ip_address(), addr.get_port(), socket->keepalive);
     }
+    
+
+    // wait socket connection
+    _smutex.lock();
+#if MBED_CONF_RTOS_PRESENT
+    status = _if_socket_opened.wait_for(NINA_W132_OPEN_TIMEOUT);
+#endif
+
+    _smutex.unlock();
 
     socket->connected = (ret == NSAPI_ERROR_OK) ? true : false;
 
@@ -702,7 +748,12 @@ int NINAW132Interface::socket_send(void *handle, const void *data, unsigned size
         return socket->proto == NSAPI_TCP ? 0 : NSAPI_ERROR_UNSUPPORTED;
     }
 
-    status = _ninaw132.send(socket->id, data, size);
+
+    if (socket->proto == NSAPI_TCP) {
+        status = _ninaw132.send_tcp(socket->id, data, size);
+    } else {
+        status = _ninaw132.send_udp(socket->id, data, size);
+    }
 
     if (status == NSAPI_ERROR_WOULD_BLOCK && socket->proto == NSAPI_TCP
             && core_util_atomic_cas_u8(&_cbs[socket->id].deferred, &expect_false, true)) {
@@ -742,10 +793,10 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
 #if MBED_CONF_RTOS_PRESENT
     status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
 #endif
-
+    
     if (status == rtos::cv_status::no_timeout) {
+        printf("Socket recv: data available!\n");
         if (socket->proto == NSAPI_TCP) {
-
             recv = _ninaw132.recv_tcp(socket->id, data, size);
             if (recv <= 0 && recv != NSAPI_ERROR_WOULD_BLOCK) {
                 socket->connected = false;
@@ -984,6 +1035,21 @@ void NINAW132Interface::refresh_socket_data_state_cb(int *sock_id)
         _socket_stat_cb(sock_id);
     }
 }
+
+void NINAW132Interface::refresh_socket_open_state_cb(int *sock_id)
+{
+    _smutex.lock();
+#if MBED_CONF_RTOS_PRESENT
+        _if_socket_opened.notify_all();
+#endif
+    _smutex.unlock();
+
+    // not implemented
+    if (_socket_stat_cb) {
+        _socket_stat_cb(sock_id);
+    }
+}
+
 
 void NINAW132Interface::proc_oob_evnt()
 {
