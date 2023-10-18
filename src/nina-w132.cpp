@@ -44,7 +44,8 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _ninaw132_debug(debug || ninaw132_debug),
         _udp_passive(true),
         _tcp_passive(true),
-        _data_format(TCP_UDP_BINARY_DATA_FORMAT),
+        _udp_data_format(TCP_UDP_BINARY_DATA_FORMAT),
+        _tcp_data_format(TCP_UDP_HEXA_DATA_FORMAT),
         _callback(),
         _serial(tx, rx, MBED_CONF_NINA_W132_SERIAL_BAUDRATE),
         _parser(&_serial),
@@ -65,6 +66,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
     _parser.oob("+UUWLD:", callback(this, &NINAW132::_oob_link_disconnected));
     _parser.oob("+UUWLE:", callback(this, &NINAW132::_oob_connection));
     _parser.oob("+UUDATA:", callback(this, &NINAW132::_oob_tcp_data_hdlr));
+    _parser.oob("+UUDPC:", callback(this, &NINAW132::_oob_socket_connection));
 
     uart_enable_input(true);
 
@@ -413,12 +415,14 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
     _process_oob(NINA_W132_SEND_TIMEOUT, true);
 
     // See the reason above with close()
-    if ((id < 1) && (id > SOCKET_COUNT)) {
+    if ((id < 0) || (id > SOCKET_COUNT)) {
         _smutex.unlock();
         return NSAPI_ERROR_PARAMETER;
     } else if (_sock_i[id].open) {
         close(id);
     }
+
+    printf("[open tcp] socket id: %d\n", id + 1);
 
     for (int i = 0; i < 2; i++) {
         if (keepalive) {
@@ -453,7 +457,7 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
 
     debug_if(_ninaw132_debug,
             "open_tcp: TCP socket %d opened: %s . ",
-            id,
+            id + 1,
             (_sock_i[id].open ? "true" : "false"));
 
     return done ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
@@ -477,10 +481,10 @@ nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port)
         _smutex.unlock();
         return NSAPI_ERROR_PARAMETER;
     } else if (_sock_i[id].open) {
-        close(id);
+        close(_sock_active_id);
     }
 
-    _sock_active_id = id;
+    printf("[open udp] socket id: %d\n", id + 1);
 
     for (int i = 0; i < 2; i++) {
         done = _parser.send("AT+UDCP=\"%s://%s:%d\"", type, addr, port);
@@ -510,22 +514,21 @@ nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port)
 
     debug_if(_ninaw132_debug,
             "open_udp: UDP socket %d opened: %s . ",
-            id,
+            id + 1,
             (_sock_i[id].open ? "true" : "false"));
 
     return done ? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
 
-nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
+nsapi_size_or_error_t NINAW132::send_udp(int id, const void *data, uint32_t amount)
 {
-
     nsapi_error_t ret = NSAPI_ERROR_OK;
 
     // +UDATW supports up to 2000 bytes for Binary and 256 bytes for String and hexadecimal format
     // (cf p.38 of AT commands manual)
     printf("data Amount: %d\n", amount);
 
-    if (_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
+    if (_udp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
         if (amount > 2000) {
             amount = 2000;
         }
@@ -536,11 +539,67 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     }
 
     _smutex.lock();
-    _sock_sending_id = id;
+
     set_timeout(NINA_W132_SEND_TIMEOUT);
 
-    if (_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
-        _parser.send("AT+UDATW=%d,%d,%d", id, _data_format, amount);
+    if (_udp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
+        _parser.send("AT+UDATW=%d,%d,%d", id + 1, _udp_data_format, amount);
+        if (!_parser.recv(">")) {
+            // This means NINAW132 hasn't even started to receive data
+            debug_if(_ninaw132_debug, "send(): Didn't get \">\"\n");
+            ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
+        }
+        // send data
+        _parser.write((char *)data, (int)amount);
+
+    } else {
+        // unsupported
+        _smutex.unlock();
+        ret = NSAPI_ERROR_DEVICE_ERROR;
+        return ret;
+    }
+
+    if (!_parser.recv("OK")) {
+        debug_if(_ninaw132_debug, "send(): Failed to write serial data");
+        // Serial is not working, serious error, reset needed.
+        ret = NSAPI_ERROR_DEVICE_ERROR;
+    }
+
+    if (!_sock_i[id].open && ret < 0) {
+        ret = NSAPI_ERROR_CONNECTION_LOST;
+        debug_if(_ninaw132_debug, "send(): Socket %d closed abruptly.", id + 1);
+    }
+
+    set_timeout();
+    _smutex.unlock();
+
+    return ret;
+}
+
+nsapi_size_or_error_t NINAW132::send_tcp(int id, const void *data, uint32_t amount)
+{
+
+    nsapi_error_t ret = NSAPI_ERROR_OK;
+
+    // +UDATW supports up to 2000 bytes for Binary and 256 bytes for String and hexadecimal format
+    // (cf p.38 of AT commands manual)
+    printf("data Amount: %d\n", amount);
+
+    if (_tcp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
+        if (amount > 2000) {
+            amount = 2000;
+        }
+    } else {
+        if (amount > 256) {
+            amount = 256;
+        }
+    }
+
+    _smutex.lock();
+    set_timeout(NINA_W132_SEND_TIMEOUT);
+
+    if (_tcp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
+        _parser.send("AT+UDATW=%d,%d,%d", id + 1, _tcp_data_format, amount);
         if (!_parser.recv(">")) {
             // This means NINAW132 hasn't even started to receive data
             debug_if(_ninaw132_debug, "send(): Didn't get \">\"\n");
@@ -551,16 +610,17 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
 
     } else {
         char cmd[300] = { 0 }; // to ensure the max amount length + cmd length
-        if (_data_format == TCP_UDP_STRING_DATA_FORMAT) {
+        if (_tcp_data_format == TCP_UDP_STRING_DATA_FORMAT) {
             // format command
-            sprintf(cmd, "AT+UDATW=%d,%d,\"", id, _data_format);
+            sprintf(cmd, "AT+UDATW=%d,%d,\"", id + 1, _tcp_data_format);
+            strncat(cmd, (char *)data, amount);
+            strcat(cmd, "\"");
             // send command and data
-            _parser.write(cmd, strlen(cmd));
-            _parser.write((char *)data, amount);
-            _parser.write("\"\r\n", 3);
+            _parser.send(cmd);
         } else {
+            printf("[send tcp] data format: hexadecimal\n");
             // format command
-            sprintf(cmd, "AT+UDATW=%d,%d,", id, _data_format);
+            sprintf(cmd, "AT+UDATW=%d,%d,", id + 1, _tcp_data_format);
             // copy and convert data
             char *convert_data = new char[amount];
             memcpy(convert_data, data, amount);
@@ -586,23 +646,179 @@ nsapi_size_or_error_t NINAW132::send(int id, const void *data, uint32_t amount)
     }
 
     if (!_sock_i[id].open && ret < 0) {
-        _sock_sending_id = -1;
         ret = NSAPI_ERROR_CONNECTION_LOST;
-        debug_if(_ninaw132_debug, "send(): Socket %d closed abruptly.", id);
+        debug_if(_ninaw132_debug, "send(): Socket %d closed abruptly.", id + 1);
     }
-
+    ret = amount;
     set_timeout();
     _smutex.unlock();
 
     return ret;
 }
 
-int32_t NINAW132::_at_data_recv(
+int32_t NINAW132::_at_tcp_data_recv(
+        int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
+{
+    int32_t ret = NSAPI_ERROR_WOULD_BLOCK;
+    bool done = false;
+    char *ptr = (char *)data;
+    uint32_t data_length = 0;
+    uint16_t read_data = 0;
+    uint16_t ptr_read_data = 0;
+
+    _smutex.lock();
+
+    set_timeout(timeout);
+
+    // check if data available
+    // done = _parser.send("AT+UDATR=%d,%d,0", id, _data_format)
+    //         && _parser.recv("OK") && _parser.recv("+UUDATA:%*d,%u\r\n", &data_available);
+    // if (!done) {
+    //     debug_if(_ninaw132_debug, "Failed to read +UUDATA response\n");
+    //     _smutex.unlock();
+    //     return ret;
+    //     // goto BUSY;
+    // }
+
+    if (_sock_i[id].len_tcp_data_rcvd > 0) {
+        switch (_tcp_data_format) {
+            read_data = _sock_i[id].len_tcp_data_rcvd;
+            case TCP_UDP_HEXA_DATA_FORMAT:
+                if (_sock_i[id].len_tcp_data_rcvd > 256) {
+                    read_data = 256;
+                }
+                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, read_data)
+                        & _parser.recv("+UDATR:%*d,");
+                break;
+
+            case TCP_UDP_BINARY_DATA_FORMAT:
+            default:
+                if (_sock_i[id].len_tcp_data_rcvd > 2000) {
+                    read_data = 2000;
+                }
+                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, read_data)
+                        & _parser.recv("+UDATR:%*d\r\n");
+                if (done) {
+                    // ignore '\n'
+                    char unused;
+                    _parser.read(&unused, 1);
+                }
+                break;
+        }
+        
+        if (!done) {
+            debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+            _smutex.unlock();
+            return ret;
+        }
+
+        _parser.read((char *)data, read_data);
+
+        ret = (int32_t)read_data;
+        
+        // read data
+        // if (_tcp_data_format == TCP_UDP_HEXA_DATA_FORMAT) {
+        //     _parser.read((char *)data, read_data);
+        //     ret = read_data;
+        //     // debug
+        //     // char *buff_data = new char[hex_data_read_lenght + 1];
+        //     // memcpy(buff_data, data, hex_data_read_lenght);
+        //     // printf("\nread data: ");
+        //     // for (uint16_t i = 0; i < hex_data_read_lenght; i++) {
+        //     //     printf("%c", buff_data[i]);
+        //     // }
+        //     // printf("\n");
+        // } else {
+        //     _parser.read((char *)data + ptr_read_data, read_data);
+        // 
+        
+
+    }
+
+    // Read all data
+    // uint16_t data_available = _sock_i[id].len_tcp_data_rcvd;
+    // printf("data available: %d\n", data_available);
+    // while (data_available > 0) {
+    //     read_data = data_available;
+    //     switch (_tcp_data_format) {
+    //         case TCP_UDP_HEXA_DATA_FORMAT:
+    //             if (data_available > 256) {
+    //                 read_data = 256;
+    //             } else {
+    //                 read_data = data_available;
+    //             }
+    //             done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, read_data)
+    //                     & _parser.recv("+UDATR:%*d,");
+    //             break;
+
+    //         case TCP_UDP_BINARY_DATA_FORMAT:
+    //         default:
+    //             if (data_available > 2000) {
+    //                 read_data = 2000;
+    //             }
+    //             done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, read_data)
+    //                     & _parser.recv("+UDATR:%*d\r\n");
+    //             if (done) {
+    //                 // ignore '\n'
+    //                 char unused;
+    //                 _parser.read(&unused, 1);
+    //             }
+    //             break;
+    //     }
+    //     if (!done) {
+    //         debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+    //         _smutex.unlock();
+    //         return ret;
+    //     }
+
+    //     // read data
+    //     if (_tcp_data_format == TCP_UDP_HEXA_DATA_FORMAT) {
+    //         _parser.read((char *)data + ptr_read_data, read_data);
+    //         ret = read_data;
+    //         // debug
+    //         // char *buff_data = new char[hex_data_read_lenght + 1];
+    //         // memcpy(buff_data, data, hex_data_read_lenght);
+    //         // printf("\nread data: ");
+    //         // for (uint16_t i = 0; i < hex_data_read_lenght; i++) {
+    //         //     printf("%c", buff_data[i]);
+    //         // }
+    //         // printf("\n");
+    //     } else {
+    //         _parser.read((char *)data + ptr_read_data, read_data);
+    //         ret = read_data;
+    //     }
+
+    //     data_available = data_available - read_data;
+    //     ptr_read_data += read_data;
+    //     // ignore OK ?
+    //     // check if new data are available ? (+UUDATA:1,0)
+    //     // if (_parser.recv("OK")) {
+    //     //     done = _parser.recv("+UDATR:%" PRId32, &data_length);
+    //     //     if (!done) {
+    //     //         debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+    //     //         _smutex.unlock();
+    //     //         return NSAPI_ERROR_WOULD_BLOCK;
+    //     //     }
+    //     //     debug_if(_ninaw132_debug, "data length available: %d", data_length);
+    //     // } else {
+    //     //     debug_if(_ninaw132_debug, "Failed to read OK of +UDATR response\n");
+    //     //     _smutex.unlock();
+    //     //     return NSAPI_ERROR_WOULD_BLOCK;
+    //     // }
+    // }
+    // ret = _sock_i[id].len_tcp_data_rcvd;
+
+    _smutex.unlock();
+    return ret;
+}
+
+int32_t NINAW132::_at_udp_data_recv(
         int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
 {
     int32_t ret = NSAPI_ERROR_WOULD_BLOCK;
     bool done = false;
     uint16_t data_available = 0;
+    uint16_t hex_data_read_lenght = 0;
     char *ptr = (char *)data;
 
     _smutex.lock();
@@ -610,7 +826,7 @@ int32_t NINAW132::_at_data_recv(
     set_timeout(timeout);
 
     // TODO: max bytes supported ?
-    if (_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
+    if (_udp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
         if (amount > 2000) {
             amount = 2000;
         }
@@ -629,18 +845,25 @@ int32_t NINAW132::_at_data_recv(
     //     return ret;
     //     // goto BUSY;
     // }
-    data_available = _sock_i[id].len_tcp_data_rcvd;
-    printf("data available: %d\n", data_available);
 
-    if (data_available > 0) {
-        switch (_data_format) {
+    printf("UDP data available: %d\n", _sock_i[id].len_tcp_data_rcvd);
+
+    if (_sock_i[id].len_tcp_data_rcvd > 0) {
+        switch (_udp_data_format) {
             case TCP_UDP_HEXA_DATA_FORMAT:
-                done = _parser.send("AT+UDATR=%d,%d,%d", id, _data_format, data_available)
+                done = _parser.send("AT+UDATR=%d,%d,%d",
+                               id + 1,
+                               _udp_data_format,
+                               _sock_i[id].len_tcp_data_rcvd)
                         & _parser.recv("+UDATR:%*d,");
+                hex_data_read_lenght = _sock_i[id].len_tcp_data_rcvd * 2;
                 break;
             case TCP_UDP_BINARY_DATA_FORMAT:
             default:
-                done = _parser.send("AT+UDATR=%d,%d,%d", id, _data_format, data_available)
+                done = _parser.send("AT+UDATR=%d,%d,%d",
+                               id + 1,
+                               _udp_data_format,
+                               _sock_i[id].len_tcp_data_rcvd)
                         & _parser.recv("+UDATR:%*d\r\n");
                 if (done) {
                     // ignore '\n'
@@ -649,29 +872,24 @@ int32_t NINAW132::_at_data_recv(
                 }
                 break;
         }
+        if (!done) {
+            debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+            _smutex.unlock();
+            return ret;
+        }
+
+        // read data
+        if (_udp_data_format == TCP_UDP_HEXA_DATA_FORMAT) {
+            _parser.read((char *)data, hex_data_read_lenght);
+        } else {
+            _parser.read((char *)data, _sock_i[id].len_tcp_data_rcvd);
+        }
+
+        ret = _sock_i[id].len_tcp_data_rcvd;
+
+        // ignore OK ?
+        // check if new data are available ? (+UUDATA:1,0)
     }
-
-    if (!done) {
-        debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
-        _smutex.unlock();
-        return ret;
-    }
-
-    // read data
-    _parser.read((char *)data, data_available);
-    ret = data_available;
-
-    // char *buff_data = new char[data_available + 1];
-    // memcpy(buff_data, data, data_available);
-    // // debug
-    // printf("\nread data: ");
-    // for (uint8_t i = 0; i < data_available; i++) {
-    //     printf("%02X", buff_data[i]);
-    // }
-    // printf("\n");
-
-    // ignore OK ?
-    // check if new data are available ? (+UUDATA:1,0)
 
     _smutex.unlock();
     return ret;
@@ -680,7 +898,7 @@ int32_t NINAW132::_at_data_recv(
 int32_t NINAW132::recv_tcp(int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
 {
     if (_tcp_passive) {
-        return _at_data_recv(id, data, amount, timeout);
+        return _at_tcp_data_recv(id, data, amount, timeout);
     }
 
     return NSAPI_ERROR_UNSUPPORTED;
@@ -689,7 +907,7 @@ int32_t NINAW132::recv_tcp(int id, void *data, uint32_t amount, duration<uint32_
 int32_t NINAW132::recv_udp(int id, void *data, uint32_t amount, duration<uint32_t, milli> timeout)
 {
     if (_udp_passive) {
-        return _at_data_recv(id, data, amount, timeout);
+        return _at_udp_data_recv(id, data, amount, timeout);
     }
 
     return NSAPI_ERROR_UNSUPPORTED;
@@ -708,9 +926,6 @@ void NINAW132::_clear_socket_packets(int id)
 
 void NINAW132::_clear_socket_sending(int id)
 {
-    if (id == _sock_sending_id) {
-        _sock_sending_id = -1;
-    }
     _sock_i[id].send_fail = false;
 }
 
@@ -719,7 +934,7 @@ bool NINAW132::close(int id)
     // May take a second try if device is busy
     for (unsigned i = 0; i < 2; i++) {
         _smutex.lock();
-        if (_parser.send("AT+UDCPC=%d", id)) {
+        if (_parser.send("AT+UDCPC=%d", id + 1)) {
             if (!_parser.recv("OK\n")) {
                 if (_closed) { // UNLINK ERROR
                     _closed = false;
@@ -729,7 +944,9 @@ bool NINAW132::close(int id)
                     _clear_socket_sending(id);
                     _smutex.unlock();
                     // NINAW132 has a habit that it might close a socket on its own.
-                    debug_if(_ninaw132_debug, "close(%d): socket close OK with UNLINK ERROR\n", id);
+                    debug_if(_ninaw132_debug,
+                            "close(%d): socket close OK with UNLINK ERROR\n",
+                            id + 1);
                     return true;
                 }
             } else {
@@ -738,14 +955,14 @@ bool NINAW132::close(int id)
                 // Closed, so this socket escapes from SEND FAIL status
                 _clear_socket_sending(id);
                 _smutex.unlock();
-                debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+UDCPC OK\n", id);
+                debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+UDCPC OK\n", id + 1);
                 return true;
             }
         }
         _smutex.unlock();
     }
 
-    debug_if(_ninaw132_debug, "close(%d): socket close FAIL'ed (spurious close)", id);
+    debug_if(_ninaw132_debug, "close(%d): socket close FAIL'ed (spurious close)", id + 1);
     return false;
 }
 
@@ -783,6 +1000,11 @@ void NINAW132::attach(Callback<void()> status_cb)
 void NINAW132::attach_socket_recv(Callback<void(int *current_socket_id)> socket_recv_cb)
 {
     _socket_recv_cb = socket_recv_cb;
+}
+
+void NINAW132::attach_socket_open(Callback<void(int *current_socket_id)> socket_open_cb)
+{
+    _socket_conn_cb = socket_open_cb;
 }
 
 bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
@@ -874,6 +1096,7 @@ void NINAW132::_oob_ready()
 void NINAW132::_oob_tcp_data_hdlr()
 {
     int32_t len;
+    int socket_info;
 
     if (!_parser.scanf("%d,%" PRId32 "\r\n", &_sock_active_id, &len)) {
         return;
@@ -883,13 +1106,24 @@ void NINAW132::_oob_tcp_data_hdlr()
 
     // data available ?
     if (len > 0) {
-        _sock_i[_sock_active_id].tcp_data_avbl = true;
+        _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
     }
 
-    _sock_i[_sock_active_id].len_tcp_data_rcvd = len;
+    _sock_i[_sock_active_id - 1].len_tcp_data_rcvd = len;
 
     MBED_ASSERT(_socket_recv_cb);
     _socket_recv_cb(&_sock_active_id);
+}
+
+void NINAW132::_oob_socket_connection()
+{
+    if (!_parser.scanf("%d", &_sock_active_id)) {
+        return;
+    }
+    _sock_i[_sock_active_id - 1].open = true;
+
+    // just for the network interface sync, ignore contents
+    _socket_conn_cb(&_sock_active_id);
 }
 
 void NINAW132::_oob_scan_results()

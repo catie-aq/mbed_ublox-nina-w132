@@ -32,6 +32,9 @@
 #ifndef NINA_W132_CONNECT_TIMEOUT
 #define NINA_W132_CONNECT_TIMEOUT 15s
 #endif
+#ifndef NINA_W132_OPEN_TIMEOUT
+#define NINA_W132_OPEN_TIMEOUT 5s
+#endif
 #ifndef NINA_W132_SEND_TIMEOUT
 #define NINA_W132_SEND_TIMEOUT 2s
 #endif
@@ -261,14 +264,24 @@ public:
     nsapi_error_t open_udp(int id, const char *addr, int port);
 
     /**
-     * Sends data to an open socket
+     * Sends data to an open UDP socket
      *
      * @param id id of socket to send to
      * @param data data to be sent
-     * @param amount amount of data to be sent - max 2048
+     * @param amount amount of data to be sent - max 2000 in the binary data format
      * @return number of bytes on success, negative error code in failure
      */
-    nsapi_size_or_error_t send(int id, const void *data, uint32_t amount);
+    nsapi_size_or_error_t send_udp(int id, const void *data, uint32_t amount);
+
+    /**
+     * Sends data to an open TCP socket
+     *
+     * @param id id of socket to send to
+     * @param data data to be sent
+     * @param amount amount of data to be sent - max 2000 in the binary data format
+     * @return number of bytes on success, negative error code in failure
+     */
+    nsapi_size_or_error_t send_tcp(int id, const void *data, uint32_t amount);
 
     /**
      * Receives stream data from an open TCP socket
@@ -370,6 +383,19 @@ public:
         attach_socket_recv(mbed::Callback<void(int *current_socket_id)>(obj, method));
     }
 
+    /**
+     * Attach a function to call whenever socket open state has changed.
+     *
+     * @param func A pointer to a void function, or 0 to set as none
+     */
+    void attach_socket_open(Callback<void(int *current_socket_id)> socket_open_cb);
+
+    template <typename T, typename M> void attach_socket_open(T *obj, M method)
+    {
+        attach_socket_open(mbed::Callback<void(int *current_socket_id)>(obj, method));
+    }
+
+
 
     /** Get the connection status
      *
@@ -416,8 +442,13 @@ private:
     // FW version specific settings and functionalities
     bool _udp_passive;
     bool _tcp_passive;
-    uint8_t _data_format;
-    int32_t _at_data_recv(int id,
+    uint8_t _udp_data_format;
+    uint8_t _tcp_data_format;
+    int32_t _at_tcp_data_recv(int id,
+            void *data,
+            uint32_t amount,
+            std::chrono::duration<uint32_t, std::milli> timeout);
+    int32_t _at_udp_data_recv(int id,
             void *data,
             uint32_t amount,
             std::chrono::duration<uint32_t, std::milli> timeout);
@@ -451,6 +482,7 @@ private:
     void _clear_socket_sending(int id);
     int _sock_active_id;
     mbed::Callback<void(int *current_socket_id)> _socket_recv_cb; // NINAW132Interface registered
+    mbed::Callback<void(int *current_socket_id)> _socket_conn_cb; // NINAW132Interface registered
 
     // Memory statistics
     size_t _heap_usage; // (Socket data buffer usage)
@@ -459,6 +491,7 @@ private:
     void _process_oob(std::chrono::duration<uint32_t, std::milli> timeout, bool all);
 
     // OOB message handlers
+    void _oob_socket_connection();
     void _oob_tcp_data_hdlr();
     void _oob_ready();
     void _oob_scan_results();
@@ -474,7 +507,6 @@ private:
     bool _closed;
     bool _error;
     bool _busy;
-    int _sock_sending_id;
 
     // Modem's address info
     char _ip_buffer[16];
