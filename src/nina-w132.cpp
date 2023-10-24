@@ -616,7 +616,6 @@ nsapi_size_or_error_t NINAW132::send_tcp(int id, const void *data, uint32_t amou
             // send command and data
             _parser.send(cmd);
         } else {
-            printf("[send tcp] data format: hexadecimal\n");
             // format command
             sprintf(cmd, "AT+UDATW=%d,%d,", id + 1, _tcp_data_format);
             // copy and convert data
