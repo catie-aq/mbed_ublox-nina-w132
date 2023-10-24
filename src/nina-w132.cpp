@@ -683,7 +683,7 @@ int32_t NINAW132::_at_tcp_data_recv(
     }
 
     debug_if(_ninaw132_debug,
-            "[at_tcp_data_recv] UDP data available: %d\n",
+            "[at_tcp_data_recv] TCP data available: %d\n",
             _sock_i[id].len_tcp_data_rcvd);
 
     if (_sock_i[id].len_tcp_data_rcvd > 0) {
