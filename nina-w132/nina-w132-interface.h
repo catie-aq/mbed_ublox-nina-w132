@@ -18,18 +18,19 @@
 #ifndef NINAW132_INTERFACE_H
 #define NINAW132_INTERFACE_H
 
-// #if DEVICE_SERIAL && DEVICE_INTERRUPTIN && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_API_PRESENT)
+// #if DEVICE_SERIAL && DEVICE_INTERRUPTIN && defined(MBED_CONF_EVENTS_PRESENT) &&
+// defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_API_PRESENT)
 #include "drivers/DigitalOut.h"
 #include "drivers/Timer.h"
-#include "nina-w132.h"
 #include "events/EventQueue.h"
 #include "events/mbed_shared_queues.h"
 #include "netsocket/NetworkInterface.h"
 #include "netsocket/NetworkStack.h"
-#include "netsocket/nsapi_types.h"
 #include "netsocket/SocketAddress.h"
 #include "netsocket/WiFiAccessPoint.h"
 #include "netsocket/WiFiInterface.h"
+#include "netsocket/nsapi_types.h"
+#include "nina-w132.h"
 #include "platform/Callback.h"
 #include "platform/mbed_chrono.h"
 #if MBED_CONF_RTOS_PRESENT
@@ -40,7 +41,8 @@
 #define NINAW132_SOCKET_COUNT 5
 
 #define NINAW132_INTERFACE_CONNECT_INTERVAL 5s
-#define NINAW132_INTERFACE_CONNECT_TIMEOUT (2 * NINA_W132_CONNECT_TIMEOUT + NINAW132_INTERFACE_CONNECT_INTERVAL)
+#define NINAW132_INTERFACE_CONNECT_TIMEOUT                                                         \
+    (2 * NINA_W132_CONNECT_TIMEOUT + NINAW132_INTERFACE_CONNECT_INTERVAL)
 
 #ifdef TARGET_FF_ARDUINO
 #ifndef MBED_CONF_NINAW132_TX
@@ -67,7 +69,7 @@
 /** NINAW132Interface class
  *  Implementation of the NetworkStack for the NINAW132
  */
-class NINAW132Interface : public NetworkStack, public WiFiInterface {
+class NINAW132Interface: public NetworkStack, public WiFiInterface {
 public:
 #if defined MBED_CONF_NINAW132_TX && defined MBED_CONF_NINAW132_RX
     /**
@@ -77,7 +79,7 @@ public:
     NINAW132Interface();
 #endif
 
-   /** NINAW132Interface lifetime
+    /** NINAW132Interface lifetime
      * @param debug     Enable debugging
      */
     NINAW132Interface(bool debug = MBED_CONF_NINA_W132_DEBUG);
@@ -105,11 +107,14 @@ public:
      *  @param ssid      Name of the network to connect to
      *  @param pass      Security passphrase to connect to the network
      *  @param security  Type of encryption for connection (Default: NSAPI_SECURITY_NONE)
-     *  @param channel   This parameter is not supported, setting it to anything else than 0 will result in NSAPI_ERROR_UNSUPPORTED
+     *  @param channel   This parameter is not supported, setting it to anything else than 0 will
+     * result in NSAPI_ERROR_UNSUPPORTED
      *  @return          0 on success, or error code on failure
      */
-    virtual int connect(const char *ssid, const char *pass, nsapi_security_t security = NSAPI_SECURITY_NONE,
-                        uint8_t channel = 0);
+    virtual int connect(const char *ssid,
+            const char *pass,
+            nsapi_security_t security = NSAPI_SECURITY_NONE,
+            uint8_t channel = 0);
 
     /** Set the WiFi network credentials
      *
@@ -119,7 +124,8 @@ public:
      *                   (defaults to NSAPI_SECURITY_NONE)
      *  @return          0 on success, or error code on failure
      */
-    virtual int set_credentials(const char *ssid, const char *pass, nsapi_security_t security = NSAPI_SECURITY_NONE);
+    virtual int set_credentials(
+            const char *ssid, const char *pass, nsapi_security_t security = NSAPI_SECURITY_NONE);
 
     /** Set the WiFi network channel - NOT SUPPORTED
      *
@@ -131,7 +137,9 @@ public:
     virtual int set_channel(uint8_t channel);
 
     /** @copydoc NetworkInterface::set_network */
-    virtual nsapi_error_t set_network(const SocketAddress &ip_address, const SocketAddress &netmask, const SocketAddress &gateway);
+    virtual nsapi_error_t set_network(const SocketAddress &ip_address,
+            const SocketAddress &netmask,
+            const SocketAddress &gateway);
 
     /** @copydoc NetworkInterface::dhcp */
     virtual nsapi_error_t set_dhcp(bool dhcp);
@@ -152,10 +160,10 @@ public:
     virtual const char *get_mac_address();
 
     /** Get the local gateway
-    *
-    *  @return         Null-terminated representation of the local gateway
-    *                  or null if no network mask has been recieved
-    */
+     *
+     *  @return         Null-terminated representation of the local gateway
+     *                  or null if no network mask has been recieved
+     */
     virtual nsapi_error_t get_gateway(SocketAddress *address);
 
     MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
@@ -206,8 +214,8 @@ public:
      *
      * @param  ap    Pointer to allocated array to store discovered AP
      * @param  count Size of allocated @a res array, or 0 to only count available AP
-     * @return       Number of entries in @a, or if @a count was 0 number of available networks, negative on error
-     *               see @a nsapi_error
+     * @return       Number of entries in @a, or if @a count was 0 number of available networks,
+     * negative on error see @a nsapi_error
      */
     virtual int scan(WiFiAccessPoint *res, unsigned count);
 
@@ -226,15 +234,17 @@ public:
      *  @return         0 on success, negative error code on failure
      */
 
-    // nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t version, const char *interface_name);
-// #if MBED_CONF_NINAW132_BUILT_IN_DNS
-//     nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t version, const char *interface_name);
-// #else
-//     using NetworkInterface::gethostbyname;
-// #endif
+    // nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t
+    // version, const char *interface_name);
+    // #if MBED_CONF_NINAW132_BUILT_IN_DNS
+    //     nsapi_error_t gethostbyname(const char *name, SocketAddress *address, nsapi_version_t
+    //     version, const char *interface_name);
+    // #else
+    //     using NetworkInterface::gethostbyname;
+    // #endif
 
-//     using NetworkInterface::gethostbyname_async;
-//     using NetworkInterface::gethostbyname_async_cancel;
+    //     using NetworkInterface::gethostbyname_async;
+    //     using NetworkInterface::gethostbyname_async_cancel;
 
     /** Add a domain name server to list of servers to query
      *
@@ -249,13 +259,13 @@ public:
 
     /** @copydoc NetworkStack::setsockopt
      */
-    virtual nsapi_error_t setsockopt(nsapi_socket_t handle, int level,
-                                     int optname, const void *optval, unsigned optlen);
+    virtual nsapi_error_t setsockopt(
+            nsapi_socket_t handle, int level, int optname, const void *optval, unsigned optlen);
 
     /** @copydoc NetworkStack::getsockopt
      */
-    virtual nsapi_error_t getsockopt(nsapi_socket_t handle, int level, int optname,
-                                     void *optval, unsigned *optlen);
+    virtual nsapi_error_t getsockopt(
+            nsapi_socket_t handle, int level, int optname, void *optval, unsigned *optlen);
 
     /** Register callback for status reporting
      *
@@ -353,7 +363,8 @@ protected:
      *  @note This call is not-blocking, if this call would block, must
      *        immediately return NSAPI_ERROR_WOULD_WAIT
      */
-    virtual int socket_sendto(void *handle, const SocketAddress &address, const void *data, unsigned size);
+    virtual int socket_sendto(
+            void *handle, const SocketAddress &address, const void *data, unsigned size);
 
     /** Receive a packet from a remote endpoint
      *  @param handle       Socket handle
@@ -397,7 +408,7 @@ private:
     void refresh_socket_data_state_cb(int *sock_id);
     void refresh_socket_open_state_cb(int *sock_id);
     int _socket_open(void *handle);
-    
+
     // Debug
     bool _ninaw132_interface_debug;
     // AT layer
@@ -413,13 +424,14 @@ private:
     } ninaw132_connection_software_status_t;
 
     // Credentials
-    static const int NINAW132_SSID_MAX_LENGTH = 32; /* 32 is what 802.11 defines as longest possible name */
+    static const int NINAW132_SSID_MAX_LENGTH
+            = 32; /* 32 is what 802.11 defines as longest possible name */
     char ap_ssid[NINAW132_SSID_MAX_LENGTH + 1]; /* The longest possible name; +1 for the \0 */
     static const int NINAW132_PASSPHRASE_MAX_LENGTH = 63; /* The longest allowed passphrase */
     static const int NINAW132_PASSPHRASE_MIN_LENGTH = 8; /* The shortest allowed passphrase */
-    char ap_pass[NINAW132_PASSPHRASE_MAX_LENGTH + 1]; /* The longest possible passphrase; +1 for the \0 */
+    char ap_pass[NINAW132_PASSPHRASE_MAX_LENGTH
+            + 1]; /* The longest possible passphrase; +1 for the \0 */
     nsapi_security_t _ap_sec;
-
 
     bool _if_blocking; // NetworkInterface, blocking or not
 #if MBED_CONF_RTOS_PRESENT
@@ -448,12 +460,13 @@ private:
     nsapi_error_t _init(void);
     nsapi_error_t _reset();
 
-    //sigio
+    // sigio
     struct {
         void (*callback)(void *);
         void *data;
         uint8_t deferred;
     } _cbs[NINAW132_SOCKET_COUNT];
+
     void event();
     void event_deferred();
 
@@ -475,7 +488,6 @@ private:
     rtos::Mutex _omutex; // Protect asynchronous connection logic
     ninaw132_connection_software_status_t _software_conn_stat;
     bool _dhcp;
-
 };
 #endif
 // #endif

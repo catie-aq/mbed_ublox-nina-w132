@@ -561,23 +561,6 @@ nsapi_error_t NINAW132Interface::_reset()
 
 int NINAW132Interface::socket_open(void **handle, nsapi_protocol_t proto)
 {
-    // // Look for an unused socket
-    // int id = -1;
-
-    // for (int i = 0; i < NINAW132_SOCKET_COUNT; i++) {
-    //     if (!_sock_i[i].open) {
-    //         id = i;
-    //         _sock_i[i].open = true;
-    //         break;
-    //     }
-    // }
-
-    // if (id == -1) {
-    //     return NSAPI_ERROR_NO_SOCKET;
-    // }
-
-    // printf("\n\n[socket open] id: %d\n\n", id);
-
     struct nina_w132_socket *socket = new struct nina_w132_socket;
     if (!socket) {
         return NSAPI_ERROR_NO_SOCKET;
@@ -614,10 +597,11 @@ int NINAW132Interface::_socket_open(void *handle)
         return NSAPI_ERROR_NO_SOCKET;
     }
 
-    printf("\n\n[socket open] id: %d\n\n", id);
-
     socket->id = id;
     handle = socket;
+
+    debug_if(_ninaw132_interface_debug, "[socket open] id: %d\n", id);
+
     return 0;
 }
 
@@ -672,14 +656,6 @@ int NINAW132Interface::socket_bind(void *handle, const SocketAddress &address)
             }
         }
         _sock_i[socket->id].sport = address.get_port();
-
-        // UNSUPPORTED
-        // int ret = _ninaw132.open_udp(
-        //         socket->id, LOCAL_ADDR, address.get_port(), _sock_i[socket->id].sport, 2);
-
-        // socket->bound = (ret == NSAPI_ERROR_OK) ? true : false;
-
-        // return ret;
     }
 
     return NSAPI_ERROR_UNSUPPORTED;
@@ -702,7 +678,9 @@ int NINAW132Interface::socket_connect(void *handle, const SocketAddress &addr)
     if (!socket) {
         return NSAPI_ERROR_NO_SOCKET;
     }
-    printf("[socket connect] socket id: %d\n", socket->id);
+
+    debug_if(_ninaw132_interface_debug, "[socket connect] socket id: %d\n", socket->id);
+
     if (socket->proto == NSAPI_UDP) {
         ret = _ninaw132.open_udp(socket->id, addr.get_ip_address(), addr.get_port());
     } else {
@@ -780,8 +758,6 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
         return NSAPI_ERROR_NO_SOCKET;
     }
 
-    printf("[Socket recv] socket id: %d\n", socket->id);
-
     if (!_sock_i[socket->id].open) {
         return NSAPI_ERROR_CONNECTION_LOST;
     }
@@ -789,8 +765,8 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
     _smutex.lock();
 
     if (!_ninaw132.data_available(socket->id)) {
- #if MBED_CONF_RTOS_PRESENT
-    status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
+#if MBED_CONF_RTOS_PRESENT
+        status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
 #endif
     } else {
         // data already availbale, force no_timeout status
@@ -798,7 +774,6 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
     }
 
     if (status == rtos::cv_status::no_timeout) {
-        printf("Socket recv: data available!\n");
         if (socket->proto == NSAPI_TCP) {
             recv = _ninaw132.recv_tcp(socket->id, data, size);
         } else {

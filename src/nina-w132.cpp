@@ -428,8 +428,6 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
         close(id);
     }
 
-    printf("[open tcp] socket id: %d\n", id + 1);
-
     for (int i = 0; i < 2; i++) {
         if (keepalive) {
             done = _parser.send("AT+UDCP=\"%s://%s:%d/?flush_tx=2\"", type, addr, port);
@@ -490,8 +488,6 @@ nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port)
         close(_sock_active_id);
     }
 
-    printf("[open udp] socket id: %d\n", id + 1);
-
     for (int i = 0; i < 2; i++) {
         done = _parser.send("AT+UDCP=\"%s://%s:%d\"", type, addr, port);
 
@@ -532,8 +528,6 @@ nsapi_size_or_error_t NINAW132::send_udp(int id, const void *data, uint32_t amou
 
     // +UDATW supports up to 2000 bytes for Binary and 256 bytes for String and hexadecimal format
     // (cf p.38 of AT commands manual)
-    printf("data Amount: %d\n", amount);
-
     if (_udp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
         if (amount > 2000) {
             amount = 2000;
@@ -589,8 +583,6 @@ nsapi_size_or_error_t NINAW132::send_tcp(int id, const void *data, uint32_t amou
 
     // +UDATW supports up to 2000 bytes for Binary and 256 bytes for String and hexadecimal format
     // (cf p.38 of AT commands manual)
-    printf("data Amount: %d\n", amount);
-
     if (_tcp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
         if (amount > 2000) {
             amount = 2000;
@@ -669,7 +661,7 @@ int32_t NINAW132::_at_tcp_data_recv(
     bool done = false;
 
     _smutex.lock();
-   
+
     // check if data available
     // done = _parser.send("AT+UDATR=%d,%d,0", id, _data_format)
     //         && _parser.recv("OK") && _parser.recv("+UUDATA:%*d,%u\r\n", &data_available);
@@ -690,11 +682,15 @@ int32_t NINAW132::_at_tcp_data_recv(
         }
     }
 
+    debug_if(_ninaw132_debug,
+            "[at_tcp_data_recv] UDP data available: %d\n",
+            _sock_i[id].len_tcp_data_rcvd);
+
     if (_sock_i[id].len_tcp_data_rcvd > 0) {
         if (amount > _sock_i[id].len_tcp_data_rcvd) {
             amount = _sock_i[id].len_tcp_data_rcvd;
         }
-        switch (_tcp_data_format) {   
+        switch (_tcp_data_format) {
             case TCP_UDP_HEXA_DATA_FORMAT:
                 done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, amount)
                         & _parser.recv("+UDATR:%*d,");
@@ -711,7 +707,7 @@ int32_t NINAW132::_at_tcp_data_recv(
                 }
                 break;
         }
-        
+
         if (!done) {
             debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
             _smutex.unlock();
@@ -727,8 +723,7 @@ int32_t NINAW132::_at_tcp_data_recv(
             _sock_i[id].tcp_data_avbl = false;
         }
 
-        ret = (int32_t)amount;      
-
+        ret = (int32_t)amount;
     }
 
     _smutex.unlock();
@@ -764,7 +759,9 @@ int32_t NINAW132::_at_udp_data_recv(
     //     // goto BUSY;
     // }
 
-    printf("[_at_udp_data_recv] UDP data available: %d\n", _sock_i[id].len_tcp_data_rcvd);
+    debug_if(_ninaw132_debug,
+            "[at_udp_data_recv] UDP data available: %d\n",
+            _sock_i[id].len_tcp_data_rcvd);
 
     if (_sock_i[id].len_tcp_data_rcvd > 0) {
         if (amount > _sock_i[id].len_tcp_data_rcvd) {
@@ -772,18 +769,12 @@ int32_t NINAW132::_at_udp_data_recv(
         }
         switch (_udp_data_format) {
             case TCP_UDP_HEXA_DATA_FORMAT:
-                done = _parser.send("AT+UDATR=%d,%d,%d",
-                               id + 1,
-                               _udp_data_format,
-                               amount)
+                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _udp_data_format, amount)
                         & _parser.recv("+UDATR:%*d,");
                 break;
             case TCP_UDP_BINARY_DATA_FORMAT:
             default:
-                done = _parser.send("AT+UDATR=%d,%d,%d",
-                               id + 1,
-                               _udp_data_format,
-                               amount)
+                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _udp_data_format, amount)
                         & _parser.recv("+UDATR:%*d\r\n");
                 if (done) {
                     // ignore '\n'
@@ -1032,11 +1023,10 @@ void NINAW132::_oob_tcp_data_hdlr()
 
     _sock_i[_sock_active_id - 1].len_tcp_data_rcvd = len;
 
-    //MBED_ASSERT(_socket_recv_cb);
+    // MBED_ASSERT(_socket_recv_cb);
     if (_socket_recv_cb) {
         _socket_recv_cb(&_sock_active_id);
     }
-   
 }
 
 void NINAW132::_oob_socket_connection()
@@ -1060,7 +1050,6 @@ void NINAW132::_oob_socket_disconnection()
     MBED_ASSERT(_sock_active_id >= 1 && _sock_active_id < 6);
     _sock_i[_sock_active_id - 1].open = false;
 }
-
 
 void NINAW132::_oob_scan_results()
 {
