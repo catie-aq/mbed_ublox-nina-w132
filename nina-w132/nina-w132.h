@@ -68,7 +68,7 @@ public:
     static const int8_t WIFI_MODE_STATION = 1;
     static const int8_t WIFI_MODE_ACCESS_POINT = 2;
     // TCP UDP data format
-    static const uint8_t TCP_UDP_STRING_DATA_FORMAT = 0; 
+    static const uint8_t TCP_UDP_STRING_DATA_FORMAT = 0;
     static const uint8_t TCP_UDP_HEXA_DATA_FORMAT = 1;
     static const uint8_t TCP_UDP_BINARY_DATA_FORMAT = 2;
 
@@ -317,7 +317,7 @@ public:
      */
     bool close(int id);
 
-   /**
+    /**
      * Socket data available
      *
      * @return true if data are available
@@ -394,8 +394,6 @@ public:
     {
         attach_socket_open(mbed::Callback<void(int *current_socket_id)>(obj, method));
     }
-
-
 
     /** Get the connection status
      *
