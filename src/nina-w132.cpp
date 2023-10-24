@@ -37,7 +37,7 @@ using std::milli;
 
 // activate / de-activate debug
 #define ninaw132_debug 0
-#define at_debug 1
+#define at_debug 0
 
 static Timer t;
 static uint32_t t_ms = 0;
@@ -460,7 +460,7 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
     _smutex.unlock();
 
     debug_if(_ninaw132_debug,
-            "open_tcp: TCP socket %d opened: %s . ",
+            "open_tcp: TCP socket %d opened: %s . \n",
             id + 1,
             (_sock_i[id].open ? "true" : "false"));
 
@@ -515,7 +515,7 @@ nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port)
     _smutex.unlock();
 
     debug_if(_ninaw132_debug,
-            "open_udp: UDP socket %d opened: %s . ",
+            "open_udp: UDP socket %d opened: %s . \n",
             id + 1,
             (_sock_i[id].open ? "true" : "false"));
 
