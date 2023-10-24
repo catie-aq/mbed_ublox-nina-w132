@@ -39,7 +39,7 @@
 #define NINA_W132_SEND_TIMEOUT 2s
 #endif
 #ifndef NINA_W132_RECV_TIMEOUT
-#define NINA_W132_RECV_TIMEOUT std::chrono::seconds(10)
+#define NINA_W132_RECV_TIMEOUT 10s
 #endif
 #ifndef NINA_W132_MISC_TIMEOUT
 #define NINA_W132_MISC_TIMEOUT std::chrono::seconds(2)
@@ -491,6 +491,7 @@ private:
     void _process_oob(std::chrono::duration<uint32_t, std::milli> timeout, bool all);
 
     // OOB message handlers
+    void _oob_socket_disconnection();
     void _oob_socket_connection();
     void _oob_tcp_data_hdlr();
     void _oob_ready();
