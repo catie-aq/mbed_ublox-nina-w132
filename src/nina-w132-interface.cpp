@@ -31,7 +31,7 @@ using namespace mbed;
 using namespace rtos;
 
 // Set 1 to force debug information
-#define ninaw132_interface_debug 0
+#define ninaw132_interface_debug 1
 
 // NINAW132Interface implementation
 NINAW132Interface::NINAW132Interface(bool debug):
@@ -600,7 +600,7 @@ int NINAW132Interface::_socket_open(void *handle)
     socket->id = id;
     handle = socket;
 
-    debug_if(_ninaw132_interface_debug, "[socket open] id: %d\n", id);
+    debug_if(_ninaw132_interface_debug, "[Network Interface] [socket open] id: %d\n", id);
 
     return 0;
 }
@@ -631,6 +631,9 @@ int NINAW132Interface::socket_close(void *handle)
     _sock_i[socket->id].open = false;
     _sock_i[socket->id].sport = 0;
     delete socket;
+
+    debug_if(_ninaw132_interface_debug, "[Network Interface] [socket close] id: %d\n", socket->id);
+
     return err;
 }
 
@@ -679,7 +682,7 @@ int NINAW132Interface::socket_connect(void *handle, const SocketAddress &addr)
         return NSAPI_ERROR_NO_SOCKET;
     }
 
-    debug_if(_ninaw132_interface_debug, "[socket connect] socket id: %d\n", socket->id);
+    debug_if(_ninaw132_interface_debug, "[Network Interface] [socket connect] socket id: %d\n", socket->id);
 
     if (socket->proto == NSAPI_UDP) {
         ret = _ninaw132.open_udp(socket->id, addr.get_ip_address(), addr.get_port());
@@ -729,20 +732,6 @@ int NINAW132Interface::socket_send(void *handle, const void *data, unsigned size
         status = _ninaw132.send_tcp(socket->id, data, size);
     } else {
         status = _ninaw132.send_udp(socket->id, data, size);
-    }
-
-    if (status == NSAPI_ERROR_WOULD_BLOCK && socket->proto == NSAPI_TCP
-            && core_util_atomic_cas_u8(&_cbs[socket->id].deferred, &expect_false, true)) {
-        debug_if(_ninaw132_interface_debug, "socket_send(...): Postponing SIGIO from the device.");
-        if (!_global_event_queue->call_in(
-                    50ms, callback(this, &NINAW132Interface::event_deferred))) {
-            MBED_ERROR(MBED_MAKE_ERROR(MBED_MODULE_DRIVER, MBED_ERROR_CODE_ENOMEM),
-                    "socket_send(): unable to add event to queue. Increase "
-                    "\"events.shared-eventsize\"\n");
-        }
-
-    } else if (status == NSAPI_ERROR_WOULD_BLOCK && socket->proto == NSAPI_UDP) {
-        status = NSAPI_ERROR_DEVICE_ERROR;
     }
 
     return status;
