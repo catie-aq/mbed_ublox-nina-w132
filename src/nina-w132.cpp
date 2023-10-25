@@ -37,10 +37,7 @@ using std::milli;
 
 // activate / de-activate debug
 #define ninaw132_debug 0
-#define at_debug 0
-
-static Timer t;
-static uint32_t t_ms = 0;
+#define at_debug 1
 
 NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _at_v(-1, -1, -1),
@@ -843,38 +840,41 @@ void NINAW132::_clear_socket_sending(int id)
 bool NINAW132::close(int id)
 {
     // May take a second try if device is busy
-    for (unsigned i = 0; i < 2; i++) {
-        _smutex.lock();
-        if (_parser.send("AT+UDCPC=%d", id + 1)) {
-            if (!_parser.recv("OK\n")) {
-                if (_closed) { // UNLINK ERROR
-                    _closed = false;
-                    _sock_i[id].open = false;
+    if (_sock_i[id].open == true) {
+        for (unsigned i = 0; i < 2; i++) {
+            _smutex.lock();
+            if (_parser.send("AT+UDCPC=%d", id + 1)) {
+                if (!_parser.recv("OK\n")) {
+                    if (_closed) { // UNLINK ERROR
+                        _closed = false;
+                        _sock_i[id].open = false;
+                        _clear_socket_packets(id);
+                        // Closed, so this socket escapes from SEND FAIL status.
+                        _clear_socket_sending(id);
+                        _smutex.unlock();
+                        // NINAW132 has a habit that it might close a socket on its own.
+                        debug_if(_ninaw132_debug,
+                                "close(%d): socket close OK with UNLINK ERROR\n",
+                                id + 1);
+                        return true;
+                    }
+                } else {
+                    // _sock_i[id].open set to false with an OOB
                     _clear_socket_packets(id);
-                    // Closed, so this socket escapes from SEND FAIL status.
+                    // Closed, so this socket escapes from SEND FAIL status
                     _clear_socket_sending(id);
                     _smutex.unlock();
-                    // NINAW132 has a habit that it might close a socket on its own.
-                    debug_if(_ninaw132_debug,
-                            "close(%d): socket close OK with UNLINK ERROR\n",
-                            id + 1);
+                    debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+UDCPC OK\n", id + 1);
                     return true;
                 }
-            } else {
-                // _sock_i[id].open set to false with an OOB
-                _clear_socket_packets(id);
-                // Closed, so this socket escapes from SEND FAIL status
-                _clear_socket_sending(id);
-                _smutex.unlock();
-                debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+UDCPC OK\n", id + 1);
-                return true;
-            }
+            }  
+            debug_if(_ninaw132_debug, "close(%d): socket close FAIL'ed (spurious close)\n", id + 1);
+            _smutex.unlock();
+            return false;
         }
-        _smutex.unlock();
-    }
-
-    debug_if(_ninaw132_debug, "close(%d): socket close FAIL'ed (spurious close)\n", id + 1);
-    return false;
+    } 
+    debug_if(_ninaw132_debug, "close(%d): socket is already closed\n", id + 1);
+    return true;
 }
 
 bool NINAW132::data_available(int socket_id)
