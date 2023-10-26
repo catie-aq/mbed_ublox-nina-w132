@@ -436,7 +436,6 @@ private:
     bool _if_blocking; // NetworkInterface, blocking or not
 #if MBED_CONF_RTOS_PRESENT
     rtos::ConditionVariable _if_connected;
-    rtos::ConditionVariable _if_data_available;
     rtos::ConditionVariable _if_socket_opened;
 #endif
 
