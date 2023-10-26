@@ -1085,11 +1085,12 @@ void NINAW132::_oob_tcp_data_hdlr()
     // data available 
     _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
     
-
+    _smutex.lock();
 #if MBED_CONF_RTOS_PRESENT
     _if_data_available.notify_all();
 #endif
-
+    _smutex.unlock();
+    
     // MBED_ASSERT(_socket_recv_cb);
     if (_socket_recv_cb) {
         _socket_recv_cb(&_sock_active_id);
