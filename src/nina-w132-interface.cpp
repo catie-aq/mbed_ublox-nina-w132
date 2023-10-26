@@ -43,7 +43,6 @@ NINAW132Interface::NINAW132Interface(bool debug):
         _if_blocking(true),
 #if MBED_CONF_RTOS_PRESENT
         _if_connected(_cmutex),
-        _if_data_available(_smutex),
         _if_socket_opened(_smutex),
 #endif
         _socket_stat_cb(0),
@@ -740,7 +739,6 @@ int NINAW132Interface::socket_send(void *handle, const void *data, unsigned size
 int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
 {
     struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
-    cv_status status;
     int32_t recv = 0;
 
     if (!socket) {
@@ -753,26 +751,17 @@ int NINAW132Interface::socket_recv(void *handle, void *data, unsigned size)
 
     _smutex.lock();
 
-    if (!_ninaw132.data_available(socket->id)) {
-#if MBED_CONF_RTOS_PRESENT
-        status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
-#endif
+    if (socket->proto == NSAPI_TCP) {
+        recv = _ninaw132.recv_tcp(socket->id, data, size);
     } else {
-        // data already availbale, force no_timeout status
-        status = rtos::cv_status::no_timeout;
-    }
-
-    if (status == rtos::cv_status::no_timeout) {
-        if (socket->proto == NSAPI_TCP) {
-            recv = _ninaw132.recv_tcp(socket->id, data, size);
-        } else {
-            recv = _ninaw132.recv_udp(socket->id, data, size);
-        }
-    } else {
-        return NSAPI_ERROR_WOULD_BLOCK;
+        recv = _ninaw132.recv_udp(socket->id, data, size);
     }
 
     _smutex.unlock();
+    
+    if (recv < 0 ) {
+        return NSAPI_ERROR_WOULD_BLOCK;
+    }
 
     return recv;
 }
@@ -987,11 +976,11 @@ void NINAW132Interface::refresh_conn_state_cb()
 
 void NINAW132Interface::refresh_socket_data_state_cb(int *sock_id)
 {
-    _smutex.lock();
-#if MBED_CONF_RTOS_PRESENT
-    _if_data_available.notify_all();
-#endif
-    _smutex.unlock();
+//     _smutex.lock();
+// #if MBED_CONF_RTOS_PRESENT
+//     _if_data_available.notify_all();
+// #endif
+//     _smutex.unlock();
 
     // not implemented
     if (_socket_stat_cb) {

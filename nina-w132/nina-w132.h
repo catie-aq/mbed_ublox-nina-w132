@@ -482,6 +482,10 @@ private:
     mbed::Callback<void(int *current_socket_id)> _socket_recv_cb; // NINAW132Interface registered
     mbed::Callback<void(int *current_socket_id)> _socket_conn_cb; // NINAW132Interface registered
 
+#if MBED_CONF_RTOS_PRESENT
+    rtos::ConditionVariable _if_data_available;
+#endif
+
     // Memory statistics
     size_t _heap_usage; // (Socket data buffer usage)
 

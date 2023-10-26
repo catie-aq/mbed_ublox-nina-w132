@@ -45,7 +45,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _udp_passive(true),
         _tcp_passive(true),
         _udp_data_format(TCP_UDP_BINARY_DATA_FORMAT),
-        _tcp_data_format(TCP_UDP_HEXA_DATA_FORMAT),
+        _tcp_data_format(TCP_UDP_BINARY_DATA_FORMAT),
         _callback(),
         _serial(tx, rx, MBED_CONF_NINA_W132_SERIAL_BAUDRATE),
         _parser(&_serial),
@@ -55,7 +55,9 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _sock_active_id(-1),
         _socket_conn_cb(NULL),
         _socket_recv_cb(NULL),
-        _heap_usage(0),
+#if MBED_CONF_RTOS_PRESENT
+        _if_data_available(_smutex),
+#endif
         _disconnect(false),
         _conn_status(NSAPI_STATUS_DISCONNECTED)
 {
@@ -655,6 +657,7 @@ int32_t NINAW132::_at_tcp_data_recv(
 {
     int32_t ret = NSAPI_ERROR_WOULD_BLOCK;
     bool done = false;
+    cv_status status;
 
     _smutex.lock();
 
@@ -678,48 +681,77 @@ int32_t NINAW132::_at_tcp_data_recv(
         }
     }
 
-    debug_if(_ninaw132_debug,
-            "[at_tcp_data_recv] TCP data available: %d\n",
-            _sock_i[id].len_tcp_data_rcvd);
+    // wait event 
+#if MBED_CONF_RTOS_PRESENT
+    if (!data_available(id)) {
+    status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
 
-    if (_sock_i[id].len_tcp_data_rcvd > 0) {
-        if (amount > _sock_i[id].len_tcp_data_rcvd) {
-            amount = _sock_i[id].len_tcp_data_rcvd;
+    } else {
+        // force no_timeout status to continue
+        status = rtos::cv_status::no_timeout;
+    }
+#else
+    if (_sock_i[id].tcp_data_avbl != true) {
+        // wait +UUDATA message
+        while(!data_available(id) && ((uint32_t)timeout > 0)) {
+            ThisThread::sleep_for(1ms);
+            timeout--;
         }
-        switch (_tcp_data_format) {
-            case TCP_UDP_HEXA_DATA_FORMAT:
-                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, amount)
-                        & _parser.recv("+UDATR:%*d,");
-                break;
+    }
+#endif
 
-            case TCP_UDP_BINARY_DATA_FORMAT:
-            default:
-                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, amount)
-                        & _parser.recv("+UDATR:%*d\r\n");
-                if (done) {
-                    // ignore '\n'
-                    char unused;
-                    _parser.read(&unused, 1);
-                }
-                break;
-        }
+#if MBED_CONF_RTOS_PRESENT
+    if (status == rtos::cv_status::no_timeout) {
+#else
+    // ignore response
+    if ((uint32_t)timeout) {
+#endif
 
-        if (!done) {
-            debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
-            _smutex.unlock();
-            return ret;
-        }
+        debug_if(_ninaw132_debug,
+                "[at_tcp_data_recv] TCP data available: %d\n",
+                _sock_i[id].len_tcp_data_rcvd);
 
-        _parser.read((char *)data, amount);
+        if (_sock_i[id].len_tcp_data_rcvd > 0) {
+            if (amount > _sock_i[id].len_tcp_data_rcvd) {
+                amount = _sock_i[id].len_tcp_data_rcvd;
+            }
+            switch (_tcp_data_format) {
+                case TCP_UDP_HEXA_DATA_FORMAT:
+                    done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, amount)
+                            & _parser.recv("+UDATR:%*d,");
+                    break;
 
-        _sock_i[id].len_tcp_data_rcvd -= amount;
+                case TCP_UDP_BINARY_DATA_FORMAT:
+                default:
+                    done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _tcp_data_format, amount)
+                            & _parser.recv("+UDATR:%*d\r\n");
+                    if (done) {
+                        // ignore '\n'
+                        char unused;
+                        _parser.read(&unused, 1);
+                    }
+                    break;
+            }
 
-        if (_sock_i[id].len_tcp_data_rcvd <= 0) {
-            // all data have been read
-            _sock_i[id].tcp_data_avbl = false;
-        }
+            if (!done) {
+                debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+                _smutex.unlock();
+                return ret;
+            }
 
-        ret = (int32_t)amount;
+            _parser.read((char *)data, amount);
+
+            _sock_i[id].len_tcp_data_rcvd -= amount;
+
+            if (_sock_i[id].len_tcp_data_rcvd <= 0) {
+                // all data have been read
+                _sock_i[id].tcp_data_avbl = false;
+            }
+
+            ret = (int32_t)amount;
+        } 
+    } else {
+        debug_if(_ninaw132_debug, "[at_udp_data_recv] timeout on socket %d!\n", id + 1);
     }
 
     _smutex.unlock();
@@ -731,8 +763,11 @@ int32_t NINAW132::_at_udp_data_recv(
 {
     int32_t ret = NSAPI_ERROR_WOULD_BLOCK;
     bool done = false;
+    cv_status status;
 
     _smutex.lock();
+
+    set_timeout(timeout);
 
     // TODO: max bytes supported ?
     if (_udp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
@@ -755,48 +790,78 @@ int32_t NINAW132::_at_udp_data_recv(
     //     // goto BUSY;
     // }
 
-    debug_if(_ninaw132_debug,
-            "[at_udp_data_recv] UDP data available: %d\n",
-            _sock_i[id].len_tcp_data_rcvd);
+    // wait event 
+#if MBED_CONF_RTOS_PRESENT
+    if (!data_available(id)) {
+    status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
 
-    if (_sock_i[id].len_tcp_data_rcvd > 0) {
-        if (amount > _sock_i[id].len_tcp_data_rcvd) {
-            amount = _sock_i[id].len_tcp_data_rcvd;
+    } else {
+        // force no_timeout status to continue
+        status = rtos::cv_status::no_timeout;
+    }
+#else
+    if (_sock_i[id].tcp_data_avbl != true) {
+        // wait +UUDATA message
+        while(!data_available(id) && ((uint32_t)timeout > 0)) {
+            ThisThread::sleep_for(1ms);
+            timeout--;
         }
-        switch (_udp_data_format) {
-            case TCP_UDP_HEXA_DATA_FORMAT:
-                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _udp_data_format, amount)
-                        & _parser.recv("+UDATR:%*d,");
-                break;
-            case TCP_UDP_BINARY_DATA_FORMAT:
-            default:
-                done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _udp_data_format, amount)
-                        & _parser.recv("+UDATR:%*d\r\n");
-                if (done) {
-                    // ignore '\n'
-                    char unused;
-                    _parser.read(&unused, 1);
-                }
-                break;
-        }
-        if (!done) {
-            debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
-            _smutex.unlock();
-            return ret;
-        }
+    }
+#endif
+    
 
-        // read data
-        _parser.read((char *)data, amount);
-        // refresh data len available
-        _sock_i[id].len_tcp_data_rcvd -= amount;
-        if (_sock_i[id].len_tcp_data_rcvd <= 0) {
-            // all data have been read
-            _sock_i[id].tcp_data_avbl = false;
-        }
-        ret = amount;
+#if MBED_CONF_RTOS_PRESENT
+    if (status == rtos::cv_status::no_timeout) {
+#else
+    // ignore response
+    if ((uint32_t)timeout) {
+#endif
+        debug_if(_ninaw132_debug,
+                "[at_udp_data_recv] UDP data available: %d\n",
+                _sock_i[id].len_tcp_data_rcvd);
 
-        // ignore OK ?
-        // check if new data are available ? (+UUDATA:1,0)
+        if (_sock_i[id].len_tcp_data_rcvd > 0) {
+            if (amount > _sock_i[id].len_tcp_data_rcvd) {
+                amount = _sock_i[id].len_tcp_data_rcvd;
+            }
+            switch (_udp_data_format) {
+                case TCP_UDP_HEXA_DATA_FORMAT:
+                    done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _udp_data_format, amount)
+                            & _parser.recv("+UDATR:%*d,");
+                    break;
+                case TCP_UDP_BINARY_DATA_FORMAT:
+                default:
+                    done = _parser.send("AT+UDATR=%d,%d,%d", id + 1, _udp_data_format, amount)
+                            & _parser.recv("+UDATR:%*d\r\n");
+                    if (done) {
+                        // ignore '\n'
+                        char unused;
+                        _parser.read(&unused, 1);
+                    }
+                    break;
+            }
+            if (!done) {
+                debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+                _smutex.unlock();
+                return ret;
+            }
+
+            // read data
+            _parser.read((char *)data, amount);
+            // refresh data len available
+            _sock_i[id].len_tcp_data_rcvd -= amount;
+            if (_sock_i[id].len_tcp_data_rcvd <= 0) {
+                // all data have been read
+                _sock_i[id].tcp_data_avbl = false;
+            }
+            ret = amount;
+
+            // ignore OK ?
+            // check if new data are available ? (+UUDATA:1,0)
+        }
+    } else {
+        ret = NSAPI_ERROR_TIMEOUT;
+        debug_if(_ninaw132_debug, "[at_tcp_data_recv] timeout on socket %d!\n", id + 1);
     }
 
     _smutex.unlock();
@@ -1015,12 +1080,15 @@ void NINAW132::_oob_tcp_data_hdlr()
 
     MBED_ASSERT(_sock_active_id >= 1 && _sock_active_id < 6);
 
-    // data available ?
-    if (len > 0) {
-        _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
-    }
-
     _sock_i[_sock_active_id - 1].len_tcp_data_rcvd = len;
+
+    // data available 
+    _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
+    
+
+#if MBED_CONF_RTOS_PRESENT
+    _if_data_available.notify_all();
+#endif
 
     // MBED_ASSERT(_socket_recv_cb);
     if (_socket_recv_cb) {
