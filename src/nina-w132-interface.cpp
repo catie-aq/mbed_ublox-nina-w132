@@ -67,7 +67,7 @@ NINAW132Interface::NINAW132Interface(bool debug):
     _ninaw132.sigio(this, &NINAW132Interface::event);
     _ninaw132.set_timeout();
     _ninaw132.attach(this, &NINAW132Interface::refresh_conn_state_cb);
-    _ninaw132.attach_socket_recv(this, &NINAW132Interface::refresh_socket_data_state_cb);
+    // _ninaw132.attach_socket_recv(this, &NINAW132Interface::refresh_socket_data_state_cb);
     _ninaw132.attach_socket_open(this, &NINAW132Interface::refresh_socket_open_state_cb);
 
     for (int i = 0; i < NINAW132_SOCKET_COUNT; i++) {
