@@ -684,14 +684,13 @@ int32_t NINAW132::_at_tcp_data_recv(
     // wait event 
 #if MBED_CONF_RTOS_PRESENT
     if (!data_available(id)) {
-    status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
-
+        status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
     } else {
         // force no_timeout status to continue
         status = rtos::cv_status::no_timeout;
     }
 #else
-    if (_sock_i[id].tcp_data_avbl != true) {
+    if (!data_available(id)) {
         // wait +UUDATA message
         while(!data_available(id) && ((uint32_t)timeout > 0)) {
             ThisThread::sleep_for(1ms);
@@ -744,6 +743,7 @@ int32_t NINAW132::_at_tcp_data_recv(
             _sock_i[id].len_tcp_data_rcvd -= amount;
 
             if (_sock_i[id].len_tcp_data_rcvd <= 0) {
+                debug_if(_ninaw132_debug, "[at_tcp_data_recv] read All data of socket %d OK!\n", id + 1);
                 // all data have been read
                 _sock_i[id].tcp_data_avbl = false;
             }
@@ -751,7 +751,7 @@ int32_t NINAW132::_at_tcp_data_recv(
             ret = (int32_t)amount;
         } 
     } else {
-        debug_if(_ninaw132_debug, "[at_udp_data_recv] timeout on socket %d!\n", id + 1);
+        debug_if(_ninaw132_debug, "[at_tcp_data_recv] timeout on socket %d! %d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
     }
 
     _smutex.unlock();
@@ -793,14 +793,13 @@ int32_t NINAW132::_at_udp_data_recv(
     // wait event 
 #if MBED_CONF_RTOS_PRESENT
     if (!data_available(id)) {
-    status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
-
+        status = _if_data_available.wait_for(NINA_W132_RECV_TIMEOUT);
     } else {
         // force no_timeout status to continue
         status = rtos::cv_status::no_timeout;
     }
 #else
-    if (_sock_i[id].tcp_data_avbl != true) {
+    if (!data_available(id)) {
         // wait +UUDATA message
         while(!data_available(id) && ((uint32_t)timeout > 0)) {
             ThisThread::sleep_for(1ms);
@@ -851,6 +850,7 @@ int32_t NINAW132::_at_udp_data_recv(
             // refresh data len available
             _sock_i[id].len_tcp_data_rcvd -= amount;
             if (_sock_i[id].len_tcp_data_rcvd <= 0) {
+                debug_if(_ninaw132_debug, "[at_udp_data_recv] read All data of socket %d OK!\n", id + 1);
                 // all data have been read
                 _sock_i[id].tcp_data_avbl = false;
             }
@@ -861,7 +861,7 @@ int32_t NINAW132::_at_udp_data_recv(
         }
     } else {
         ret = NSAPI_ERROR_TIMEOUT;
-        debug_if(_ninaw132_debug, "[at_tcp_data_recv] timeout on socket %d!\n", id + 1);
+        debug_if(_ninaw132_debug, "[at_udp_data_recv] timeout on socket %d! len:%d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
     }
 
     _smutex.unlock();
@@ -1083,11 +1083,15 @@ void NINAW132::_oob_tcp_data_hdlr()
     _sock_i[_sock_active_id - 1].len_tcp_data_rcvd = len;
 
     // data available 
-    _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
-    
+    if (len > 0) {
+        _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
+    } else {
+        _sock_i[_sock_active_id - 1].tcp_data_avbl = false;
+    }
+ 
     _smutex.lock();
 #if MBED_CONF_RTOS_PRESENT
-    _if_data_available.notify_all();
+    _if_data_available.notify_one();
 #endif
     _smutex.unlock();
     
