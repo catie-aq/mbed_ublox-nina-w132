@@ -661,16 +661,6 @@ int32_t NINAW132::_at_tcp_data_recv(
 
     _smutex.lock();
 
-    // check if data available
-    // done = _parser.send("AT+UDATR=%d,%d,0", id, _data_format)
-    //         && _parser.recv("OK") && _parser.recv("+UUDATA:%*d,%u\r\n", &data_available);
-    // if (!done) {
-    //     debug_if(_ninaw132_debug, "Failed to read +UUDATA response\n");
-    //     _smutex.unlock();
-    //     return ret;
-    //     // goto BUSY;
-    // }
-
     if (_tcp_data_format == TCP_UDP_BINARY_DATA_FORMAT) {
         if (amount > 2000) {
             amount = 2000;
@@ -780,15 +770,15 @@ int32_t NINAW132::_at_udp_data_recv(
         }
     }
 
-    // check if data available
-    // done = _parser.send("AT+UDATR=%d,%d,0", id, _data_format)
-    //         && _parser.recv("OK") && _parser.recv("+UUDATA:%*d,%u\r\n", &data_available);
-    // if (!done) {
-    //     debug_if(_ninaw132_debug, "Failed to read +UUDATA response\n");
-    //     _smutex.unlock();
-    //     return ret;
-    //     // goto BUSY;
-    // }
+//  // check if data available
+// done = _parser.send("AT+UDATR=%d,%d,0", id + 1, _udp_data_format)
+//         && _parser.recv("OK") && _parser.recv("+UUDATA:%*d,%u\r\n", &data_avlb);
+// if (!done) {
+//     debug_if(_ninaw132_debug, "Failed to read +UUDATA response\n");
+//     _smutex.unlock();
+//     return ret;
+//     // goto BUSY;
+// }   
 
     // wait event 
 #if MBED_CONF_RTOS_PRESENT
@@ -1083,11 +1073,7 @@ void NINAW132::_oob_tcp_data_hdlr()
     _sock_i[_sock_active_id - 1].len_tcp_data_rcvd = len;
 
     // data available 
-    if (len > 0) {
-        _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
-    } else {
-        _sock_i[_sock_active_id - 1].tcp_data_avbl = false;
-    }
+    _sock_i[_sock_active_id - 1].tcp_data_avbl = true;
  
     _smutex.lock();
 #if MBED_CONF_RTOS_PRESENT
