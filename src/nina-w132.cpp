@@ -739,7 +739,10 @@ int32_t NINAW132::_at_tcp_data_recv(
             }
 
             ret = (int32_t)amount;
-        } 
+        } else {
+            ret = _sock_i[id].len_tcp_data_rcvd;
+            _sock_i[id].tcp_data_avbl = false;
+        }
     } else {
         debug_if(_ninaw132_debug, "[at_tcp_data_recv] timeout on socket %d! %d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
     }
@@ -848,6 +851,9 @@ int32_t NINAW132::_at_udp_data_recv(
 
             // ignore OK ?
             // check if new data are available ? (+UUDATA:1,0)
+        } else {
+            ret = _sock_i[id].len_tcp_data_rcvd;
+            _sock_i[id].tcp_data_avbl = false;
         }
     } else {
         ret = NSAPI_ERROR_TIMEOUT;
