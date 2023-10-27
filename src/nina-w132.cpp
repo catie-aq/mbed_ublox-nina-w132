@@ -37,7 +37,7 @@ using std::milli;
 
 // activate / de-activate debug
 #define ninaw132_debug 0
-#define at_debug 1
+#define at_debug 0
 
 NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
         _at_v(-1, -1, -1),
@@ -741,9 +741,9 @@ int32_t NINAW132::_at_tcp_data_recv(
             ret = (int32_t)amount;
         } else {
             ret = _sock_i[id].len_tcp_data_rcvd;
-            _sock_i[id].tcp_data_avbl = false;
         }
     } else {
+        ret = NSAPI_ERROR_TIMEOUT;
         debug_if(_ninaw132_debug, "[at_tcp_data_recv] timeout on socket %d! %d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
     }
 
@@ -853,7 +853,6 @@ int32_t NINAW132::_at_udp_data_recv(
             // check if new data are available ? (+UUDATA:1,0)
         } else {
             ret = _sock_i[id].len_tcp_data_rcvd;
-            _sock_i[id].tcp_data_avbl = false;
         }
     } else {
         ret = NSAPI_ERROR_TIMEOUT;
