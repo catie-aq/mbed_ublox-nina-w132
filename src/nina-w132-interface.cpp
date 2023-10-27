@@ -629,10 +629,11 @@ int NINAW132Interface::socket_close(void *handle)
     socket->bound = false;
     _sock_i[socket->id].open = false;
     _sock_i[socket->id].sport = 0;
-    delete socket;
 
     debug_if(_ninaw132_interface_debug, "[Network Interface] [socket close] id: %d\n", socket->id);
 
+    delete socket;
+    
     return err;
 }
 
