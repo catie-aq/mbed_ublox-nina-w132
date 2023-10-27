@@ -93,7 +93,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
 
 void NINAW132::hardware_reset()
 {
-    debug_if(_ninaw132_debug, "NINAW132: Hard reset Module\r\n");
+    debug_if(_ninaw132_debug, "[ninaw132] Hard reset Module\r\n");
     _resetpin = 0;
     ThisThread::sleep_for(100ms);
     _resetpin = 1;
@@ -111,7 +111,7 @@ bool NINAW132::at_available()
         if (ready) {
             break;
         }
-        debug_if(_ninaw132_debug, "at_available(): Waiting AT response.\r\n");
+        debug_if(_ninaw132_debug, "[ninaw132] [at_available()]: Waiting AT response.\r\n");
     }
     // Switch baud-rate from default one to assigned one
     if (MBED_CONF_NINA_W132_SERIAL_BAUDRATE != NINA_W132_DEFAULT_SERIAL_BAUDRATE) {
@@ -243,7 +243,7 @@ nsapi_error_t NINAW132::connect(const char *ap, const char *passPhrase, nsapi_se
     // set the SSID
     res = _parser.send("AT+UWSC=0,2,\"%s\"", ap);
     if (!res || !_parser.recv("OK")) {
-        debug_if(_ninaw132_debug, "set SSID: parameter error: %s\n", ap);
+        debug_if(_ninaw132_debug, "[ninaw132] [connect] SSID: parameter error: %s\n", ap);
         ret = NSAPI_ERROR_PARAMETER;
     }
     set_timeout(); // restore default timeout
@@ -254,11 +254,11 @@ nsapi_error_t NINAW132::connect(const char *ap, const char *passPhrase, nsapi_se
             res = _parser.send("AT+UWSC=0,8,\"%s\"", passPhrase);
             if (!res || !_parser.recv("OK")) {
                 ret = NSAPI_ERROR_PARAMETER;
-                debug_if(_ninaw132_debug, "set SSID: parameter error: %s\n", passPhrase);
+                debug_if(_ninaw132_debug, "[ninaw132] [connect] SSID: parameter error: %s\n", passPhrase);
             }
         } else {
             ret = NSAPI_ERROR_PARAMETER;
-            debug_if(_ninaw132_debug, "set SSID: parameter error: %s\n", passPhrase);
+            debug_if(_ninaw132_debug, "[ninaw132] [connect] SSID: parameter error: %s\n", passPhrase);
         }
     }
 
@@ -268,7 +268,7 @@ nsapi_error_t NINAW132::connect(const char *ap, const char *passPhrase, nsapi_se
         res = _parser.send("AT+UWSCA=0,3");
         if (!res || !_parser.recv("OK")) {
             ret = NSAPI_ERROR_AUTH_FAILURE;
-            debug_if(_ninaw132_debug, "set SSID: parameter error: %s\n");
+            debug_if(_ninaw132_debug, "[ninaw132] [connect] SSID: parameter error: %s\n");
         }
     }
     set_timeout(); // restore default timeout
@@ -384,9 +384,9 @@ int NINAW132::scan(WiFiAccessPoint *res, unsigned limit)
     ret_parse_send = _parser.send("AT+UWSCAN");
 
     if (!(ret_parse_send && _parser.recv("OK"))) {
-        debug_if(_ninaw132_debug, "scan(): AP info parsing aborted.");
+        debug_if(_ninaw132_debug, "[ninaw132] [scan] AP info parsing aborted.");
         // Lets be happy about partial success and not return NSAPI_ERROR_DEVICE_ERROR
-        debug_if(_ninaw132_debug, "scan_r count: %d\n", _scan_r.cnt);
+        debug_if(_ninaw132_debug, "[ninaw132] [scan] result count: %d\n", _scan_r.cnt);
         if (!_scan_r.cnt) {
             _scan_r.cnt = NSAPI_ERROR_DEVICE_ERROR;
         }
@@ -459,7 +459,7 @@ nsapi_error_t NINAW132::open_tcp(int id, const char *addr, int port, int keepali
     _smutex.unlock();
 
     debug_if(_ninaw132_debug,
-            "open_tcp: TCP socket %d opened: %s . \n",
+            "[ninaw132] [open tcp] TCP socket %d opened: %s . \n",
             id + 1,
             (_sock_i[id].open ? "true" : "false"));
 
@@ -514,7 +514,7 @@ nsapi_error_t NINAW132::open_udp(int id, const char *addr, int port)
     _smutex.unlock();
 
     debug_if(_ninaw132_debug,
-            "open_udp: UDP socket %d opened: %s . \n",
+            "[ninaw132] [open udp]: UDP socket %d opened: %s . \n",
             id + 1,
             (_sock_i[id].open ? "true" : "false"));
 
@@ -545,7 +545,7 @@ nsapi_size_or_error_t NINAW132::send_udp(int id, const void *data, uint32_t amou
         _parser.send("AT+UDATW=%d,%d,%d", id + 1, _udp_data_format, amount);
         if (!_parser.recv(">")) {
             // This means NINAW132 hasn't even started to receive data
-            debug_if(_ninaw132_debug, "send(): Didn't get \">\"\n");
+            debug_if(_ninaw132_debug, "[ninaw132] [send udp] Didn't get \">\"\n");
             ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
         }
         // send data
@@ -559,14 +559,14 @@ nsapi_size_or_error_t NINAW132::send_udp(int id, const void *data, uint32_t amou
     }
 
     if (!_parser.recv("OK")) {
-        debug_if(_ninaw132_debug, "send(): Failed to write serial data");
+        debug_if(_ninaw132_debug, "[ninaw132] [send udp] Failed to write serial data");
         // Serial is not working, serious error, reset needed.
         ret = NSAPI_ERROR_DEVICE_ERROR;
     }
 
     if (!_sock_i[id].open && ret < 0) {
         ret = NSAPI_ERROR_CONNECTION_LOST;
-        debug_if(_ninaw132_debug, "send(): Socket %d closed abruptly.", id + 1);
+        debug_if(_ninaw132_debug, "[ninaw132] [send udp] Socket %d closed abruptly.", id + 1);
     }
 
     set_timeout();
@@ -599,7 +599,7 @@ nsapi_size_or_error_t NINAW132::send_tcp(int id, const void *data, uint32_t amou
         _parser.send("AT+UDATW=%d,%d,%d", id + 1, _tcp_data_format, amount);
         if (!_parser.recv(">")) {
             // This means NINAW132 hasn't even started to receive data
-            debug_if(_ninaw132_debug, "send(): Didn't get \">\"\n");
+            debug_if(_ninaw132_debug, "[ninaw132] [send tcp] Didn't get \">\"\n");
             ret = NSAPI_ERROR_WOULD_BLOCK; // Not necessarily critical error.
         }
         // send data
@@ -636,14 +636,14 @@ nsapi_size_or_error_t NINAW132::send_tcp(int id, const void *data, uint32_t amou
     }
 
     if (!_parser.recv("OK")) {
-        debug_if(_ninaw132_debug, "send(): Failed to write serial data");
+        debug_if(_ninaw132_debug, "[ninaw132] [send tcp] Failed to write serial data");
         // Serial is not working, serious error, reset needed.
         ret = NSAPI_ERROR_DEVICE_ERROR;
     }
 
     if (!_sock_i[id].open && ret < 0) {
         ret = NSAPI_ERROR_CONNECTION_LOST;
-        debug_if(_ninaw132_debug, "send(): Socket %d closed abruptly.", id + 1);
+        debug_if(_ninaw132_debug, "[ninaw132] [send tcp] Socket %d closed abruptly.", id + 1);
     }
     ret = amount;
     set_timeout();
@@ -697,7 +697,7 @@ int32_t NINAW132::_at_tcp_data_recv(
 #endif
 
         debug_if(_ninaw132_debug,
-                "[at_tcp_data_recv] TCP data available: %d\n",
+                "[ninaw132] [at_tcp_data_recv] TCP data available: %d\n",
                 _sock_i[id].len_tcp_data_rcvd);
 
         if (_sock_i[id].len_tcp_data_rcvd > 0) {
@@ -723,7 +723,7 @@ int32_t NINAW132::_at_tcp_data_recv(
             }
 
             if (!done) {
-                debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+                debug_if(_ninaw132_debug, "[ninaw132] [at_tcp_data_recv] Failed to read +UDATR response\n");
                 _smutex.unlock();
                 return ret;
             }
@@ -733,7 +733,7 @@ int32_t NINAW132::_at_tcp_data_recv(
             _sock_i[id].len_tcp_data_rcvd -= amount;
 
             if (_sock_i[id].len_tcp_data_rcvd <= 0) {
-                debug_if(_ninaw132_debug, "[at_tcp_data_recv] read All data of socket %d OK!\n", id + 1);
+                debug_if(_ninaw132_debug, "[ninaw132] [at_tcp_data_recv] read All data of socket %d OK!\n", id + 1);
                 // all data have been read
                 _sock_i[id].tcp_data_avbl = false;
             }
@@ -744,7 +744,7 @@ int32_t NINAW132::_at_tcp_data_recv(
         }
     } else {
         ret = NSAPI_ERROR_TIMEOUT;
-        debug_if(_ninaw132_debug, "[at_tcp_data_recv] timeout on socket %d! %d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
+        debug_if(_ninaw132_debug, "[ninaw132] [at_tcp_data_recv] timeout on socket %d! %d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
     }
 
     _smutex.unlock();
@@ -777,7 +777,7 @@ int32_t NINAW132::_at_udp_data_recv(
 // done = _parser.send("AT+UDATR=%d,%d,0", id + 1, _udp_data_format)
 //         && _parser.recv("OK") && _parser.recv("+UUDATA:%*d,%u\r\n", &data_avlb);
 // if (!done) {
-//     debug_if(_ninaw132_debug, "Failed to read +UUDATA response\n");
+//     debug_if(_ninaw132_debug, "[ninaw132] [at_udp_data_recv] Failed to read +UUDATA response\n");
 //     _smutex.unlock();
 //     return ret;
 //     // goto BUSY;
@@ -809,7 +809,7 @@ int32_t NINAW132::_at_udp_data_recv(
     if ((uint32_t)timeout) {
 #endif
         debug_if(_ninaw132_debug,
-                "[at_udp_data_recv] UDP data available: %d\n",
+                "[ninaw132] [at_udp_data_recv] UDP data available: %d\n",
                 _sock_i[id].len_tcp_data_rcvd);
 
         if (_sock_i[id].len_tcp_data_rcvd > 0) {
@@ -833,7 +833,7 @@ int32_t NINAW132::_at_udp_data_recv(
                     break;
             }
             if (!done) {
-                debug_if(_ninaw132_debug, "Failed to read +UDATR response\n");
+                debug_if(_ninaw132_debug, "[ninaw132] [at_udp_data_recv] Failed to read +UDATR response\n");
                 _smutex.unlock();
                 return ret;
             }
@@ -843,7 +843,7 @@ int32_t NINAW132::_at_udp_data_recv(
             // refresh data len available
             _sock_i[id].len_tcp_data_rcvd -= amount;
             if (_sock_i[id].len_tcp_data_rcvd <= 0) {
-                debug_if(_ninaw132_debug, "[at_udp_data_recv] read All data of socket %d OK!\n", id + 1);
+                debug_if(_ninaw132_debug, "[ninaw132] [at_udp_data_recv] read All data of socket %d OK!\n", id + 1);
                 // all data have been read
                 _sock_i[id].tcp_data_avbl = false;
             }
@@ -856,7 +856,7 @@ int32_t NINAW132::_at_udp_data_recv(
         }
     } else {
         ret = NSAPI_ERROR_TIMEOUT;
-        debug_if(_ninaw132_debug, "[at_udp_data_recv] timeout on socket %d! len:%d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
+        debug_if(_ninaw132_debug, "[ninaw132] [at_udp_data_recv] timeout on socket %d! len:%d\n", id + 1, _sock_i[id].len_tcp_data_rcvd);
     }
 
     _smutex.unlock();
@@ -914,7 +914,7 @@ bool NINAW132::close(int id)
                         _smutex.unlock();
                         // NINAW132 has a habit that it might close a socket on its own.
                         debug_if(_ninaw132_debug,
-                                "close(%d): socket close OK with UNLINK ERROR\n",
+                                "[ninaw132] [close] socket(%d): socket close OK with UNLINK ERROR\n",
                                 id + 1);
                         return true;
                     }
@@ -924,16 +924,16 @@ bool NINAW132::close(int id)
                     // Closed, so this socket escapes from SEND FAIL status
                     _clear_socket_sending(id);
                     _smutex.unlock();
-                    debug_if(_ninaw132_debug, "close(%d): socket close OK with AT+UDCPC OK\n", id + 1);
+                    debug_if(_ninaw132_debug, "[ninaw132] [close] socket(%d): socket close OK with AT+UDCPC OK\n", id + 1);
                     return true;
                 }
             }  
-            debug_if(_ninaw132_debug, "close(%d): socket close FAIL'ed (spurious close)\n", id + 1);
+            debug_if(_ninaw132_debug, "[ninaw132] [close] socket(%d): socket close FAIL'ed (spurious close)\n", id + 1);
             _smutex.unlock();
             return false;
         }
     } 
-    debug_if(_ninaw132_debug, "close(%d): socket is already closed\n", id + 1);
+    debug_if(_ninaw132_debug, "[ninaw132] [close] socket(%d): socket is already closed\n", id + 1);
     return true;
 }
 
@@ -991,7 +991,7 @@ bool NINAW132::_recv_ap(nsapi_wifi_ap_t *ap)
     if (ret < 0) {
         fflush(stdout);
         _parser.abort();
-        debug_if(_ninaw132_debug, "_recv_ap(): scanf error.");
+        debug_if(_ninaw132_debug, "[ninaw132] [recv_ap!]: scanf error.");
     }
 
     // Initialize the SSID to all \0
@@ -1061,7 +1061,7 @@ void NINAW132::bg_process_oob(duration<uint32_t, milli> timeout, bool all)
 
 void NINAW132::_oob_ready()
 {
-    debug_if(_ninaw132_debug, "ready to use AT commands.");
+    debug_if(_ninaw132_debug, "[ninaw132] [oob_ready!] ready to use AT commands.");
 }
 
 void NINAW132::_oob_tcp_data_hdlr()
