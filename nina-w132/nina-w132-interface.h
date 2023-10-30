@@ -416,7 +416,7 @@ private:
 
     /** Status of software connection
      */
-    typedef enum esp_connection_software_status {
+    typedef enum ninaw132_connection_software_status {
         IFACE_STATUS_DISCONNECTED = 0,
         IFACE_STATUS_CONNECTING = 1,
         IFACE_STATUS_CONNECTED = 2,
@@ -459,7 +459,7 @@ private:
     nsapi_error_t _init(void);
     nsapi_error_t _reset();
 
-    // sigio
+    // sigio: not yet supported
     struct {
         void (*callback)(void *);
         void *data;
@@ -484,7 +484,6 @@ private:
     void _disconnect_async();
     rtos::Mutex _cmutex; // Protect asynchronous connection logic
     rtos::Mutex _smutex; // Protect asynchronous connection logic
-    rtos::Mutex _omutex; // Protect asynchronous connection logic
     ninaw132_connection_software_status_t _software_conn_stat;
     bool _dhcp;
 };

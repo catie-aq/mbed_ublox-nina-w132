@@ -639,28 +639,6 @@ int NINAW132Interface::socket_close(void *handle)
 
 int NINAW132Interface::socket_bind(void *handle, const SocketAddress &address)
 {
-    struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
-
-    if (!socket) {
-        return NSAPI_ERROR_NO_SOCKET;
-    }
-
-    if (socket->proto == NSAPI_UDP) {
-        if (address.get_addr().version != NSAPI_UNSPEC) {
-            return NSAPI_ERROR_UNSUPPORTED;
-        }
-
-        for (int id = 0; id < NINAW132_SOCKET_COUNT; id++) {
-            if (_sock_i[id].sport == address.get_port()
-                    && id != socket->id) { // Port already reserved by another socket
-                return NSAPI_ERROR_PARAMETER;
-            } else if (id == socket->id && (socket->connected || socket->bound)) {
-                return NSAPI_ERROR_PARAMETER;
-            }
-        }
-        _sock_i[socket->id].sport = address.get_port();
-    }
-
     return NSAPI_ERROR_UNSUPPORTED;
 }
 
@@ -828,60 +806,12 @@ void NINAW132Interface::socket_attach(void *handle, void (*callback)(void *), vo
 nsapi_error_t NINAW132Interface::setsockopt(
         nsapi_socket_t handle, int level, int optname, const void *optval, unsigned optlen)
 {
-    struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
-
-    if (!optlen) {
-        return NSAPI_ERROR_PARAMETER;
-    } else if (!socket) {
-        return NSAPI_ERROR_NO_SOCKET;
-    }
-
-    if (level == NSAPI_SOCKET && socket->proto == NSAPI_TCP) {
-        switch (optname) {
-            case NSAPI_KEEPALIVE: {
-                if (socket->connected) { // NINAW132 limitation, keepalive needs to be given before
-                                         // connecting
-                    return NSAPI_ERROR_UNSUPPORTED;
-                }
-
-                if (optlen == sizeof(int)) {
-                    int secs = *(int *)optval;
-                    if (secs >= 0 && secs <= 7200) {
-                        socket->keepalive = secs;
-                        return NSAPI_ERROR_OK;
-                    }
-                }
-                return NSAPI_ERROR_PARAMETER;
-            }
-        }
-    }
-
     return NSAPI_ERROR_UNSUPPORTED;
 }
 
 nsapi_error_t NINAW132Interface::getsockopt(
         nsapi_socket_t handle, int level, int optname, void *optval, unsigned *optlen)
 {
-    struct nina_w132_socket *socket = (struct nina_w132_socket *)handle;
-
-    if (!optval || !optlen) {
-        return NSAPI_ERROR_PARAMETER;
-    } else if (!socket) {
-        return NSAPI_ERROR_NO_SOCKET;
-    }
-
-    if (level == NSAPI_SOCKET && socket->proto == NSAPI_TCP) {
-        switch (optname) {
-            case NSAPI_KEEPALIVE: {
-                if (*optlen > sizeof(int)) {
-                    *optlen = sizeof(int);
-                }
-                memcpy(optval, &(socket->keepalive), *optlen);
-                return NSAPI_ERROR_OK;
-            }
-        }
-    }
-
     return NSAPI_ERROR_UNSUPPORTED;
 }
 
