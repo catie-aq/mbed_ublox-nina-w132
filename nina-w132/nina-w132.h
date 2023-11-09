@@ -498,7 +498,7 @@ private:
     void _oob_tcp_data_hdlr();
     void _oob_ready();
     void _oob_scan_results();
-    void _oob_connection();
+    void _oob_connected();
     void _oob_disconnection();
     void _oob_link_disconnected();
 

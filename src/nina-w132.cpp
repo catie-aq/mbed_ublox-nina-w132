@@ -68,7 +68,7 @@ NINAW132::NINAW132(PinName tx, PinName rx, PinName resetpin, bool debug):
     _parser.oob("+UWSCAN:", callback(this, &NINAW132::_oob_scan_results));
     _parser.oob("+UUND:", callback(this, &NINAW132::_oob_disconnection));
     _parser.oob("+UUWLD:", callback(this, &NINAW132::_oob_link_disconnected));
-    _parser.oob("+UUWLE:", callback(this, &NINAW132::_oob_connection));
+    _parser.oob("+UUWLE:", callback(this, &NINAW132::_oob_connected));
     _parser.oob("+UUDATA:", callback(this, &NINAW132::_oob_tcp_data_hdlr));
     _parser.oob("+UUDPC:", callback(this, &NINAW132::_oob_socket_connection));
     _parser.oob("+UUDPD:", callback(this, &NINAW132::_oob_socket_disconnection));
@@ -1127,10 +1127,10 @@ void NINAW132::_oob_scan_results()
     }
 }
 
-void NINAW132::_oob_connection()
+void NINAW132::_oob_connected()
 {
     // Ignore the sessdata_availableion ID, it's not relevant
-    _conn_status = NSAPI_STATUS_CONNECTING;
+    _conn_status = NSAPI_STATUS_GLOBAL_UP;
     MBED_ASSERT(_conn_stat_cb);
     _conn_stat_cb();
 }
