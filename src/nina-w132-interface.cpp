@@ -31,7 +31,7 @@ using namespace mbed;
 using namespace rtos;
 
 // Set 1 to force debug information
-#define ninaw132_interface_debug 1
+#define ninaw132_interface_debug 0
 
 // NINAW132Interface implementation
 NINAW132Interface::NINAW132Interface(bool debug):
