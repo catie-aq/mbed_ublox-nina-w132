@@ -140,9 +140,6 @@ void NINAW132Interface::_connect_async()
             _ninaw132.uart_enable_input(false);
             _software_conn_stat = IFACE_STATUS_DISCONNECTED;
         }
-#if MBED_CONF_RTOS_PRESENT
-        _if_connected.notify_all();
-#endif
     } else {
         // Postpone to give other stuff time to run
         _connect_event_id = _global_event_queue->call_in(NINAW132_INTERFACE_CONNECT_INTERVAL,
@@ -867,6 +864,11 @@ void NINAW132Interface::refresh_conn_state_cb()
             if (_software_conn_stat == IFACE_STATUS_DISCONNECTED) {
                 _software_conn_stat = IFACE_STATUS_CONNECTED;
             }
+#if MBED_CONF_RTOS_PRESENT
+            _cmutex.lock();
+            _if_connected.notify_all();
+            _cmutex.unlock();
+#endif
             break;
         // Start from scratch if connection drops/is dropped
         case NSAPI_STATUS_DISCONNECTED:
