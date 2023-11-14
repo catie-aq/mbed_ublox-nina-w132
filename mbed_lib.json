@@ -50,13 +50,6 @@
             "help": "Provide default WifiInterface. [true/false]",
             "value": false
         }
-    },
-    "target_overrides": {
-         "ZEST_CORE_STM32L4A6RG": {
-            "tx": "UART1_TX",
-            "rx": "UART1_RX",
-            "rst": "DIO2"
-        }
     }
 }
 
