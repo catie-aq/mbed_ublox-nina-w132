@@ -75,7 +75,7 @@ NINAW132Interface::NINAW132Interface(bool debug):
         _sock_i[i].sport = 0;
     }
 
-    _global_event_queue->call(callback(this, &NINAW132Interface::_init));
+    _init();
 }
 
 NINAW132Interface::~NINAW132Interface()
