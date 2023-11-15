@@ -189,8 +189,8 @@ bool NINAW132::authentification_type(nsapi_security_t security)
 
     _smutex.lock();
 
-    if (security == NSAPI_SECURITY_WPA || security == NSAPI_SECURITY_WPA2
-            || security == NSAPI_SECURITY_WPA3) {
+    if (security == NSAPI_SECURITY_WPA || security == NSAPI_SECURITY_WPA_WPA2
+            ||security == NSAPI_SECURITY_WPA2 || security == NSAPI_SECURITY_WPA3) {
         sec = 2;
     } else if (security == NSAPI_SECURITY_EAP_TLS) {
         sec = 5;
