@@ -728,7 +728,12 @@ int32_t NINAW132::_at_tcp_data_recv(
                 return ret;
             }
 
-            _parser.read((char *)data, amount);
+            int read = _parser.read((char *)data, amount);
+            if (read != amount) {
+                debug_if(_ninaw132_debug, "[ninaw132] [at_tcp_data_recv] Failed to read data\n");
+                _smutex.unlock();
+                return ret;
+            }
 
             _sock_i[id].len_tcp_data_rcvd -= amount;
 
@@ -1070,6 +1075,10 @@ void NINAW132::_oob_tcp_data_hdlr()
     int socket_info;
 
     if (!_parser.scanf("%d,%" PRId32 "\r\n", &_sock_active_id, &len)) {
+        return;
+    }
+
+    if (len == 0) {
         return;
     }
 
